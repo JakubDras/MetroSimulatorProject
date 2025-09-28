@@ -38,21 +38,64 @@ class MiniMetroEnv(gym.Env):
         return f"T{self.train_id_counter}"
 
     def _generate_initial_stations(self):
-        initial_shapes = random.sample(config.STATION_SHAPES, k=min(3, len(config.STATION_SHAPES)))
-        while len(self.stations) < 3:
-            x = random.randint(int(config.SCREEN_WIDTH * 0.2), int(config.SCREEN_WIDTH * 0.8))
-            y = random.randint(int(config.SCREEN_HEIGHT * 0.2), int(config.SCREEN_HEIGHT * 0.8))
+        initial_stations_count = 3
 
-            new_pos_vec = pygame.Vector2(x, y)
-            if all(new_pos_vec.distance_to(s.pos) > config.STATION_MIN_DISTANCE for s in self.stations):
-                station_model = StationModel(
-                    station_id=self._get_new_station_id(),
-                    pos=(x, y),
-                    shape=initial_shapes.pop()
-                )
-                new_station = Station(station_model)
-                self.stations.append(new_station)
-                self.G.add_node(station_model.station_id, pos=station_model.pos)
+        # 1. Przygotuj unikalne kształty dla stacji początkowych
+        # Używamy `min`, na wypadek, gdyby w configu było mniej niż 3 kształty
+        k = min(initial_stations_count, len(config.STATION_SHAPES))
+        initial_shapes = random.sample(config.STATION_SHAPES, k=k)
+
+        # 2. Stwórz PIERWSZĄ stację w węższym, centralnym obszarze (25%-75% ekranu)
+        first_x = random.randint(int(config.SCREEN_WIDTH * 0.25), int(config.SCREEN_WIDTH * 0.75))
+        first_y = random.randint(int(config.SCREEN_HEIGHT * 0.25), int(config.SCREEN_HEIGHT * 0.75))
+
+        # Używamy poprawnego, dwuetapowego tworzenia obiektu (Model -> Obiekt)
+        station_model = StationModel(
+            station_id=self._get_new_station_id(),
+            pos=(first_x, first_y),
+            shape=initial_shapes.pop()
+        )
+        new_station = Station(station_model)
+        self.stations.append(new_station)
+        self.G.add_node(station_model.station_id, pos=station_model.pos)
+        print(f"Dodano początkową stację: {new_station.data.shape} w ({first_x}, {first_y})")
+
+        # 3. Stwórz POZOSTAŁE stacje w pobliżu już istniejących
+        while len(self.stations) < initial_stations_count:
+            # Wybierz losową z już istniejących stacji jako punkt odniesienia
+            neighbour_station = random.choice(self.stations)
+
+            # Pętla próbująca znaleźć odpowiednie miejsce (max 100 prób dla bezpieczeństwa)
+            spawned = False
+            attempts = 0
+            while not spawned and attempts < 100:
+                # Używamy promienia 15% z Twojego preferowanego kodu
+                radius = config.SCREEN_WIDTH * 0.15
+
+                x = random.randint(int(neighbour_station.pos.x - radius), int(neighbour_station.pos.x + radius))
+                y = random.randint(int(neighbour_station.pos.y - radius), int(neighbour_station.pos.y + radius))
+
+                # Sprawdzamy, czy stacja nie jest za blisko krawędzi
+                if not (50 < x < config.SCREEN_WIDTH - 50 and 50 < y < config.SCREEN_HEIGHT - 50):
+                    attempts += 1
+                    continue  # Jeśli jest za blisko, spróbuj ponownie
+
+                # Sprawdzamy minimalną odległość od innych stacji
+                new_pos_vec = pygame.Vector2(x, y)
+                if all(new_pos_vec.distance_to(s.pos) > config.STATION_MIN_DISTANCE for s in self.stations):
+                    # Poprawne tworzenie obiektu
+                    station_model = StationModel(
+                        station_id=self._get_new_station_id(),
+                        pos=(x, y),
+                        shape=initial_shapes.pop()
+                    )
+                    new_station = Station(station_model)
+                    self.stations.append(new_station)
+                    self.G.add_node(station_model.station_id, pos=station_model.pos)
+                    print(f"Dodano początkową stację: {new_station.data.shape} w ({x}, {y})")
+                    spawned = True  # Sukces, przerywamy pętlę prób
+
+                attempts += 1
 
     def _handle_manage_line(self, params) -> float:
         line_action_type, p1, p2 = params
@@ -101,33 +144,36 @@ class MiniMetroEnv(gym.Env):
 
         elif line_action_type == 1:  # Usuń linię
             if current_line:
-                # Usuń krawędzie z grafu
-                edges_to_remove = [
-                    (u, v, k) for u, v, k, data in self.G.edges(data=True, keys=True)
-                    if data.get('color') == selected_color
-                ]
-                self.G.remove_edges_from(edges_to_remove)
+                # <<< POCZĄTEK NOWEJ, NIEZAWODNEJ LOGIKI USUWANIA KRAWĘDZI >>>
 
-                # <<< POCZĄTEK NOWEJ MECHANIKI >>>
-                # 1. Znajdź wszystkie pociągi na usuwanej linii
+                # 1. Pobierz listę obiektów stacji bezpośrednio z linii, którą usuwamy
+                station_objects_on_line = current_line.stations
+                color_key = str(current_line.data.color)
+
+                # 2. Iteruj wzdłuż linii i usuwaj każdy segment (krawędź) po kolei
+                for i in range(len(station_objects_on_line) - 1):
+                    # Pobierz ID stacji początkowej i końcowej dla danego segmentu
+                    u_id = station_objects_on_line[i].data.station_id
+                    v_id = station_objects_on_line[i + 1].data.station_id
+
+                    # Bezpiecznie usuń krawędź, jeśli istnieje
+                    if self.G.has_edge(u_id, v_id, key=color_key):
+                        self.G.remove_edge(u_id, v_id, key=color_key)
+
+                # < KONIEC NOWEJ LOGIKI >
+
+                # Logika "ewakuacji" pasażerów pozostaje bez zmian
                 trains_to_remove = [t for t in self.trains if t.line == current_line]
-
-                # 2. Dla każdego pociągu, przenieś jego pasażerów
                 for train in trains_to_remove:
-                    # Znajdź obiekt ostatniej stacji na podstawie ID z modelu pociągu
                     last_station = next(
                         (s for s in self.stations if s.data.station_id == train.data.current_station_id),
                         None
                     )
-
-                    # Jeśli stacja istnieje i pociąg ma pasażerów, przenieś ich
                     if last_station and train.data.passengers:
                         last_station.data.passengers.extend(train.data.passengers)
 
-                # 3. Zaktualizuj listę pociągów i zwróć zasoby
                 self.trains = [t for t in self.trains if t.line != current_line]
                 self.available_trains += len(trains_to_remove)
-                # <<< KONIEC NOWEJ MECHANIKI >>>
 
                 # Usuń samą linię
                 self.lines.remove(current_line)
@@ -172,8 +218,11 @@ class MiniMetroEnv(gym.Env):
         return -0.01
 
     def _update_passenger_spawning(self):
-        self.passenger_spawn_timer += self.clock.get_time() if self.clock else (1000 / config.FPS)
-        if self.passenger_spawn_timer >= config.PASSENGER_SPAWN_RATE:
+        # ZMIANA: Zamiast dodawać czas w ms, po prostu zliczamy klatki (kroki)
+        self.passenger_spawn_timer += 1
+
+        # ZMIANA: Porównujemy z nową wartością z configu wyrażoną w klatkach
+        if self.passenger_spawn_timer >= config.PASSENGER_SPAWN_RATE_FRAMES:
             self.passenger_spawn_timer = 0
             if not self.stations: return
             station = random.choice(self.stations)
@@ -199,37 +248,64 @@ class MiniMetroEnv(gym.Env):
         return reward
 
     def _update_station_spawning(self):
-        if len(
-            self.stations) >= config.MAX_STATIONS or self.spawned_stations_this_week >= config.STATIONS_TO_SPAWN_PER_WEEK: return
-        if self.week_timer < config.STATION_SPAWN_TIMES[self.spawned_stations_this_week]: return
+        # Warunki początkowe pozostają bez zmian sprawdzają, czy w ogóle powinniśmy próbować tworzyć stację
+        if len(self.stations) >= config.MAX_STATIONS or self.spawned_stations_this_week >= config.STATIONS_TO_SPAWN_PER_WEEK:
+            return
+        if self.week_timer < config.STATION_SPAWN_TIMES[self.spawned_stations_this_week]:
+            return
 
         spawned = False
         attempts = 0
-        while not spawned and attempts < 100:
-            if not self.stations: return
+        max_attempts = 100
+
+        # Główna pętla jest teraz zgodna z Twoim preferowanym kodem
+        while not spawned and attempts < max_attempts:
+            if not self.stations: return  # Zabezpieczenie na wypadek braku stacji
+
             neighbour_station = random.choice(self.stations)
-            x = random.randint(
-                max(20, int(neighbour_station.pos.x - config.SCREEN_WIDTH * 0.15)),
-                min(int(config.SCREEN_WIDTH - 20), int(neighbour_station.pos.x + config.SCREEN_WIDTH * 0.15))
-            )
-            y = random.randint(
-                max(20, int(neighbour_station.pos.y - config.SCREEN_HEIGHT * 0.15)),
-                min(int(config.SCREEN_HEIGHT - 20), int(neighbour_station.pos.y + config.SCREEN_HEIGHT * 0.15))
-            )
+
+            # Zmniejszony promień losowania pozycji do 12% wymiarów ekranu
+            x_radius = config.SCREEN_WIDTH * 0.12
+            y_radius = config.SCREEN_HEIGHT * 0.12
+
+            x = random.randint(round(neighbour_station.pos.x - x_radius), round(neighbour_station.pos.x + x_radius))
+            y = random.randint(round(neighbour_station.pos.y - y_radius), round(neighbour_station.pos.y + y_radius))
+
+            # Pętla zapewniająca, że stacja nie pojawi się zbyt blisko krawędzi ekranu
+            while not (20 < x < config.SCREEN_WIDTH - 20 and 20 < y < config.SCREEN_HEIGHT - 20):
+                x = random.randint(round(neighbour_station.pos.x - x_radius), round(neighbour_station.pos.x + x_radius))
+                y = random.randint(round(neighbour_station.pos.y - y_radius), round(neighbour_station.pos.y + y_radius))
+
             new_pos_vec = pygame.Vector2(x, y)
 
+            # Sprawdzenie minimalnej odległości od innych stacji
             if all(new_pos_vec.distance_to(s.pos) > config.STATION_MIN_DISTANCE for s in self.stations):
+                shape = random.choice(config.STATION_SHAPES)
+
+                # Tworzenie stacji zgodnie z architekturą środowiska (Model -> Obiekt)
                 station_model = StationModel(
                     station_id=self._get_new_station_id(),
-                    pos=(x, y), shape=random.choice(config.STATION_SHAPES)
+                    pos=(x, y),
+                    shape=shape
                 )
                 new_station = Station(station_model)
+
+                # Dodanie stacji do stanu gry
                 self.stations.append(new_station)
                 self.G.add_node(station_model.station_id, pos=station_model.pos)
+
+                # Ta linia jest kluczowa dla logiki gry, dlatego została zachowana
                 self.all_passengers_plan_update()
+
+                print(f"Nowa stacja ({shape}) pojawiła się w Tygodniu {self.week_number}.")
                 spawned = True
                 self.spawned_stations_this_week += 1
+
             attempts += 1
+
+        # Komunikat, jeśli nie udało się znaleźć miejsca na stację
+        if not spawned and len(self.stations) < config.MAX_STATIONS:
+            print(f"Nie udało się dodać nowej stacji w Tygodniu {self.week_number} po {max_attempts} próbach.")
 
     def _update_week_timer(self) -> float:
         self.week_timer += 1
@@ -291,66 +367,73 @@ class MiniMetroEnv(gym.Env):
         self.screen.blit(week_text, week_rect)
 
     def travel_planner_for_new_passenger(self, passenger_model: PassengerModel):
-        final_destination_station = None
-        final_shortest_distance = float('inf')
-        path_found = False
-        try:
-            target_stations = [s for s in self.stations if s.data.shape == passenger_model.target_shape]
-            for station in target_stations:
-                try:
-                    distance = nx.shortest_path_length(
-                        self.G, source=passenger_model.origin_station_id, target=station.data.station_id,
-                        weight='weight'
-                    )
-                    if distance < final_shortest_distance:
-                        final_shortest_distance = distance
-                        final_destination_station = station
-                        path_found = True
-                except nx.NetworkXNoPath:
-                    continue
-            if path_found and final_destination_station:
+        """Wersja uproszczona: od razu szuka całej ścieżki."""
+        best_path = None
+        min_distance = float('inf')
+
+        # Znajdź wszystkie możliwe stacje docelowe
+        target_stations = [s for s in self.stations if s.data.shape == passenger_model.target_shape]
+
+        for station in target_stations:
+            try:
+                # Od razu próbuj znaleźć całą ścieżkę
                 path = nx.dijkstra_path(
-                    self.G, source=passenger_model.origin_station_id, target=final_destination_station.data.station_id,
+                    self.G,
+                    source=passenger_model.origin_station_id,
+                    target=station.data.station_id,
                     weight='weight'
                 )
-                passenger_model.travel_list = path[1:]
-            else:
-                passenger_model.travel_list = []
-        except Exception:
+                # Jeśli się udało, oblicz jej wagę (dystans)
+                distance = nx.path_weight(self.G, path, 'weight')
+
+                # Jeśli ta ścieżka jest lepsza niż dotychczasowa najlepsza, zapisz ją
+                if distance < min_distance:
+                    min_distance = distance
+                    best_path = path
+
+            except nx.NetworkXNoPath:
+                # Jeśli do tej stacji nie ma ścieżki, po prostu ją zignoruj
+                continue
+
+        # Po sprawdzeniu wszystkich opcji, przypisz najlepszą znalezioną ścieżkę
+        if best_path:
+            passenger_model.travel_list = best_path[1:]
+        else:
             passenger_model.travel_list = []
 
     def all_passengers_plan_update(self):
+        """Wersja uproszczona dla wszystkich pasażerów."""
         for station_obj in self.stations:
             for p_model in station_obj.data.passengers:
-                final_destination_station = None
-                final_shortest_distance = float('inf')
-                path_found = False
-                try:
-                    target_stations = [s for s in self.stations if s.data.shape == p_model.target_shape]
-                    for target in target_stations:
-                        try:
-                            source_id = station_obj.data.station_id
-                            target_id = target.data.station_id
-                            distance = nx.shortest_path_length(self.G, source=source_id, target=target_id,
-                                                               weight='weight')
-                            if distance < final_shortest_distance:
-                                final_shortest_distance = distance
-                                final_destination_station = target
-                                path_found = True
-                            elif distance == final_shortest_distance:
-                                final_destination_station = random.choice([final_destination_station, target])
-                        except nx.NetworkXNoPath:
-                            continue
-                    if path_found and final_destination_station:
+                best_path = None
+                min_distance = float('inf')
+
+                target_stations = [s for s in self.stations if s.data.shape == p_model.target_shape]
+
+                for target in target_stations:
+                    try:
                         path = nx.dijkstra_path(
-                            self.G, source=station_obj.data.station_id,
-                            target=final_destination_station.data.station_id, weight='weight'
+                            self.G,
+                            source=station_obj.data.station_id,
+                            target=target.data.station_id,
+                            weight='weight'
                         )
-                        p_model.travel_list = path[1:]
-                    else:
-                        p_model.travel_list = []
-                except Exception as e:
-                    # print(f"Błąd podczas aktualizacji planu pasażera: {e}")
+                        distance = nx.path_weight(self.G, path, 'weight')
+
+                        if distance < min_distance:
+                            min_distance = distance
+                            best_path = path
+                        # Logika losowego wyboru przy tym samym dystansie
+                        elif distance == min_distance:
+                            if random.choice([True, False]):
+                                best_path = path
+
+                    except nx.NetworkXNoPath:
+                        continue
+
+                if best_path:
+                    p_model.travel_list = best_path[1:]
+                else:
                     p_model.travel_list = []
 
     def __init__(self, render_mode=None):
@@ -405,10 +488,8 @@ class MiniMetroEnv(gym.Env):
         })
 
     def _get_obs(self) -> dict:
-        # --- 1. Mapowanie ID stacji na indeksy tablicy (0, 1, 2...) ---
         station_id_to_idx = {s.data.station_id: i for i, s in enumerate(self.stations)}
 
-        # --- 2. Przygotowanie cech globalnych ---
         global_features = np.array([
             self.score,
             self.week_number,
@@ -416,74 +497,55 @@ class MiniMetroEnv(gym.Env):
             self.week_timer / config.WEEK_DURATION_FRAMES
         ], dtype=np.float32)
 
-        # --- 3. Przygotowanie cech węzłów (Stacji) ---
-        node_features_shape = self.observation_space["node_features"].shape
-        node_features = np.zeros(node_features_shape, dtype=np.float32)
-
+        node_features = np.zeros(self.observation_space["node_features"].shape, dtype=np.float32)
         for i, station in enumerate(self.stations):
             pos_x = station.pos.x / config.SCREEN_WIDTH
             pos_y = station.pos.y / config.SCREEN_HEIGHT
-
             shape_idx = config.STATION_SHAPES.index(station.data.shape)
             shape_vec = np.eye(len(config.STATION_SHAPES))[shape_idx]
-
             passenger_demand = np.zeros(len(config.STATION_SHAPES), dtype=np.float32)
             for p_model in station.data.passengers:
                 target_shape_idx = config.STATION_SHAPES.index(p_model.target_shape)
                 passenger_demand[target_shape_idx] += 1
             passenger_demand /= config.STATION_CAPACITY
-
             is_overcrowded = 1.0 if station.data.is_overcrowded else 0.0
-
             node_features[i] = np.concatenate([
-                np.array([pos_x, pos_y]),
-                shape_vec,
-                passenger_demand,
-                np.array([is_overcrowded])
+                np.array([pos_x, pos_y]), shape_vec, passenger_demand, np.array([is_overcrowded])
             ])
 
-        # --- 4. Przygotowanie listy krawędzi i ich cech (z networkx) ---
         edge_list = []
         edge_feature_list = []
 
-        for u_id, v_id, edge_data in self.G.edges(data=True):
+        # ZMIANA: Dodajemy `keys = True` do pętli, aby poprawnie iterować po MultiGraph
+        for u_id, v_id, key, edge_data in self.G.edges(data=True, keys=True):
             if u_id in station_id_to_idx and v_id in station_id_to_idx:
                 u, v = station_id_to_idx[u_id], station_id_to_idx[v_id]
-
-                # ZMIANA: Pobieramy obiekty stacji, aby obliczyć dystans
                 u_station, v_station = self.stations[u], self.stations[v]
-
-                # ZMIANA: Obliczamy i normalizujemy odległość
                 distance = u_station.pos.distance_to(v_station.pos) / config.SCREEN_WIDTH
-
-                # Przygotowujemy wektor koloru (one-hot)
                 color = edge_data.get('color', config.GRAY)
                 color_vec = np.zeros(len(config.LINE_COLORS), dtype=np.float32)
-                try:
-                    color_idx = config.LINE_COLORS.index(color)
-                    color_vec[color_idx] = 1.0
-                except ValueError:
-                    pass  # Kolor nie jest kolorem linii, zostawiamy wektor zerowy
+                if color in config.LINE_COLORS:
+                    color_vec[config.LINE_COLORS.index(color)] = 1.0
 
-                # ZMIANA: Łączymy wektor koloru z odległością
                 edge_feature = np.concatenate([color_vec, [distance]])
-
-                # Dodajemy krawędź i jej cechy dla obu kierunków
                 edge_list.append([u, v])
                 edge_feature_list.append(edge_feature)
                 edge_list.append([v, u])
                 edge_feature_list.append(edge_feature)
 
-        # Wypełnienie do stałego rozmiaru (padding)
         num_edges = len(edge_list)
         edge_index = np.zeros(self.observation_space["edge_index"].shape, dtype=np.int32)
         edge_features = np.zeros(self.observation_space["edge_features"].shape, dtype=np.float32)
-
         if num_edges > 0:
+            # Zabezpieczenie przed przekroczeniem maksymalnej liczby krawędzi
+            if num_edges > self.observation_space["edge_index"].shape[1]:
+                edge_list = edge_list[:self.observation_space["edge_index"].shape[1]]
+                edge_feature_list = edge_feature_list[:self.observation_space["edge_index"].shape[1]]
+                num_edges = self.observation_space["edge_index"].shape[1]
+
             edge_index[:, :num_edges] = np.array(edge_list).T
             edge_features[:num_edges] = np.array(edge_feature_list)
 
-        # --- 5. Złożenie finalnej obserwacji ---
         return {
             "global_features": global_features,
             "node_features": node_features,
