@@ -436,6 +436,60 @@ class MiniMetroEnv(gym.Env):
                 else:
                     p_model.travel_list = []
 
+    def _get_action_masks(self) -> dict:
+        """Generuje i zwraca słownik masek dla wszystkich poziomów akcji."""
+        num_current_stations = len(self.stations)
+
+        # 1. Maska dla akcji wysokiego poziomu
+        high_level_mask = np.ones(4, dtype=np.int8)
+        if self.available_trains <= 0:
+            high_level_mask[2] = 0  # Zablokuj "deploy_train", jeśli nie ma dostępnych pociągów
+
+        # 2. Maska dla akcji "manage_line"
+        manage_line_mask = np.zeros((3, config.MAX_STATIONS, config.MAX_STATIONS), dtype=np.int8)
+        selected_color = config.LINE_COLORS[self.selected_line_index]
+        current_line = next((line for line in self.lines if line.data.color == selected_color), None)
+
+        # Logika dla akcji typu 0: Połącz/przedłuż
+        if current_line is None:  # Tworzenie nowej linii
+            for i in range(num_current_stations):
+                for j in range(num_current_stations):
+                    if i != j:
+                        manage_line_mask[0, i, j] = 1  # Odblokuj tworzenie linii między dowolnymi dwiema stacjami
+        else:  # Rozszerzanie istniejącej linii
+            if len(current_line.stations) > 1:
+                endpoints = [current_line.stations[0], current_line.stations[-1]]
+                endpoint_indices = [self.stations.index(s) for s in endpoints if s in self.stations]
+
+                for ep_idx in endpoint_indices:
+                    for j in range(num_current_stations):
+                        # Można łączyć tylko z stacją, której nie ma jeszcze na linii
+                        if self.stations[j] not in current_line.stations:
+                            manage_line_mask[0, ep_idx, j] = 1  # p1 musi być endpointem
+
+        # Logika dla akcji typu 1: Usuń linię
+        if current_line is not None:
+            # Ta akcja nie zależy od parametrów stacji, więc odblokowujemy wszystko.
+            # Agent i tak wybierze losowe p1, p2, ale handler je zignoruje.
+            manage_line_mask[1, :, :] = 1
+
+        # 3. Maska dla akcji "deploy_train"
+        deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
+        if self.available_trains > 0:
+            for i, station in enumerate(self.stations):
+                # Sprawdź, czy przez stację przechodzi jakakolwiek linia
+                if any(station.data.station_id in line.data.station_ids for line in self.lines):
+                    deploy_train_mask[i] = 1
+
+        # 4. Maska dla akcji "select_line"
+        select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
+
+        return {
+            "high_level": high_level_mask,
+            "manage_line": manage_line_mask,
+            "deploy_train": deploy_train_mask,
+            "select_line": select_line_mask,
+        }
     def __init__(self, render_mode=None):
         super().__init__()
         self.render_mode = render_mode
@@ -484,7 +538,14 @@ class MiniMetroEnv(gym.Env):
             # Tabela cech wszystkich krawędzi (kolor + odległość)
             "edge_features": spaces.Box(
                 low=0, high=1.0, shape=(MAX_EDGES, NUM_EDGE_FEATURES), dtype=np.float32
-            )
+            ),
+            "action_masks": spaces.Dict({
+                "high_level": spaces.Box(low=0, high=1, shape=(4,), dtype=np.int8),
+                "manage_line": spaces.Box(low=0, high=1, shape=(3, config.MAX_STATIONS, config.MAX_STATIONS),
+                                          dtype=np.int8),
+                "deploy_train": spaces.Box(low=0, high=1, shape=(config.MAX_STATIONS,), dtype=np.int8),
+                "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8)
+            })
         })
 
     def _get_obs(self) -> dict:
@@ -550,7 +611,8 @@ class MiniMetroEnv(gym.Env):
             "global_features": global_features,
             "node_features": node_features,
             "edge_index": edge_index,
-            "edge_features": edge_features
+            "edge_features": edge_features,
+            "action_masks": self._get_action_masks()
         }
 
     def reset(self, seed=None, options=None):
