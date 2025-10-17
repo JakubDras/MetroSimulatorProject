@@ -42,7 +42,7 @@ class PPOTrainer(pl.LightningModule):
 
     def get_action_and_value(self, obs: dict, action_dict: dict = None) -> tuple:
         value, logits = self(obs)
-        masks = self._get_action_masks_for_obs(obs)
+        masks = obs["action_masks"]
 
         total_log_prob = 0
         total_entropy = 0
@@ -168,7 +168,6 @@ class PPOTrainer(pl.LightningModule):
                     rollout_data["values"][t]
             advantages[
                 t] = last_advantage = delta + self.hparams.gamma * self.hparams.gae_lambda * next_non_terminal * last_advantage
-
         returns = advantages + rollout_data["values"]
 
         indices = np.arange(self.hparams.rollout_len)
@@ -181,23 +180,13 @@ class PPOTrainer(pl.LightningModule):
 
                 obs_batch_list = [rollout_data["observations"][i] for i in minibatch_indices]
                 actions_batch_list = [rollout_data["actions"][i] for i in minibatch_indices]
-
-                batched_obs = self._batch_observations(obs_batch_list)
-
                 old_log_probs_batch = rollout_data["log_probs"][minibatch_indices]
                 advantages_batch = advantages[minibatch_indices]
                 returns_batch = returns[minibatch_indices]
 
-                new_log_probs_list, new_values_list, entropy_list = [], [], []
-                for i in range(len(minibatch_indices)):
-                    _, log_prob, value, entropy = self.get_action_and_value(obs_batch_list[i], actions_batch_list[i])
-                    new_log_probs_list.append(log_prob)
-                    new_values_list.append(value)
-                    entropy_list.append(entropy)
+                batched_obs = self._batch_observations(obs_batch_list)
 
-                new_log_probs = torch.stack(new_log_probs_list).squeeze()
-                new_values = torch.stack(new_values_list).squeeze()
-                entropy = torch.stack(entropy_list).mean()
+                new_values, new_log_probs, entropy = self._evaluate_actions_batched(batched_obs, actions_batch_list)
 
                 ratio = torch.exp(new_log_probs - old_log_probs_batch)
                 surr1 = ratio * advantages_batch
@@ -206,7 +195,6 @@ class PPOTrainer(pl.LightningModule):
 
                 policy_loss = -torch.min(surr1, surr2).mean()
                 value_loss = F.mse_loss(new_values, returns_batch)
-
                 loss = policy_loss + 0.5 * value_loss - self.hparams.entropy_coef * entropy
 
                 optimizer.zero_grad()
@@ -220,10 +208,88 @@ class PPOTrainer(pl.LightningModule):
 
     def train_dataloader(self):
         return DataLoader(range(1))
+    def _evaluate_actions(self, obs_batch_list: list[dict], actions_batch_list: list[dict]) -> tuple:
 
-    def _get_action_masks_for_obs(self, obs):
-        """Metoda pomocnicza, aby uzyskać maski dla konkretnej obserwacji."""
-        """TODO: zobaczyć czy działa"""
-        original_stations = self.env.stations
-        num_current_stations = np.count_nonzero(obs['node_features'][:, 2:].any(axis=1))
-        return self.env._get_action_masks()
+        batched_obs = self._batch_observations(obs_batch_list)
+
+        values, logits = self(batched_obs)
+        values = values.squeeze()
+
+        new_log_probs_list = []
+        entropy_list = []
+
+        batch_vector = batched_obs["batch"]
+
+        for i in range(len(obs_batch_list)):
+            action_dict = actions_batch_list[i]
+
+            item_logits = {}
+
+            item_logits["high_level"] = logits["high_level"][i]
+            item_logits["manage_line_type"] = logits["manage_line_type"][i]
+            item_logits["select_line"] = logits["select_line"][i]
+
+            node_mask = (batch_vector == i)
+            item_logits["manage_line_p1"] = logits["manage_line_p1"][node_mask]
+            item_logits["manage_line_p2"] = logits["manage_line_p2"][node_mask]
+            item_logits["deploy_train"] = logits["deploy_train"][node_mask]
+
+            masks = obs_batch_list[i]["action_masks"]
+            total_log_prob = 0
+            total_entropy = 0
+
+            hl_action = torch.tensor([action_dict["high_level_action"]], device=self.device)
+            hl_mask = torch.as_tensor(masks["high_level"], dtype=torch.bool, device=self.device)
+            hl_logits_masked = item_logits["high_level"].masked_fill(~hl_mask, -float('inf'))
+            hl_dist = Categorical(logits=hl_logits_masked)
+            total_log_prob += hl_dist.log_prob(hl_action)
+            total_entropy += hl_dist.entropy()
+
+            action_item = hl_action.item()
+            ll_params = torch.tensor(action_dict["low_level_params"], device=self.device)
+
+            if action_item == 1:  # manage_line
+                type_action = ll_params[0]
+                type_dist = Categorical(logits=item_logits["manage_line_type"])
+                total_log_prob += type_dist.log_prob(type_action)
+                total_entropy += type_dist.entropy()
+
+                p1_action = ll_params[1]
+                p1_mask = torch.as_tensor(masks["manage_line"][type_action.item()].any(axis=1), dtype=torch.bool,
+                                          device=self.device)
+                p1_logits_masked = item_logits["manage_line_p1"].masked_fill(~p1_mask, -float('inf'))
+                p1_dist = Categorical(logits=p1_logits_masked)
+                total_log_prob += p1_dist.log_prob(p1_action)
+                total_entropy += p1_dist.entropy()
+
+                p2_action = ll_params[2]
+                p2_mask = torch.as_tensor(masks["manage_line"][type_action.item(), p1_action.item()], dtype=torch.bool,
+                                          device=self.device)
+                p2_logits_masked = item_logits["manage_line_p2"].masked_fill(~p2_mask, -float('inf'))
+                p2_dist = Categorical(logits=p2_logits_masked)
+                total_log_prob += p2_dist.log_prob(p2_action)
+                total_entropy += p2_dist.entropy()
+
+            elif action_item == 2:  # deploy_train
+                station_action = ll_params[1]
+                station_mask = torch.as_tensor(masks["deploy_train"], dtype=torch.bool, device=self.device)
+                station_logits_masked = item_logits["deploy_train"].masked_fill(~station_mask, -float('inf'))
+                station_dist = Categorical(logits=station_logits_masked)
+                total_log_prob += station_dist.log_prob(station_action)
+                total_entropy += station_dist.entropy()
+
+            elif action_item == 3:  # select_line
+                color_action = ll_params[1]
+                color_mask = torch.as_tensor(masks["select_line"], dtype=torch.bool, device=self.device)
+                color_logits_masked = item_logits["select_line"].masked_fill(~color_mask, -float('inf'))
+                color_dist = Categorical(logits=color_logits_masked)
+                total_log_prob += color_dist.log_prob(color_action)
+                total_entropy += color_dist.entropy()
+
+            new_log_probs_list.append(total_log_prob)
+            entropy_list.append(total_entropy)
+
+        new_log_probs = torch.cat(new_log_probs_list)
+        entropy = torch.stack(entropy_list).mean()
+
+        return values, new_log_probs, entropy
