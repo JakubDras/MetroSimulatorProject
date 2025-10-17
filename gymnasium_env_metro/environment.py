@@ -6,16 +6,15 @@ import random
 import networkx as nx
 from typing import List
 
-# Import modułów z Twojego projektu
 import config
 from data_models import StationModel, LineModel, TrainModel, PassengerModel
-from entities import Station, Line, Train  # Używamy Twoich klas
+from entities import Station, Line, Train
 
 
 class MiniMetroEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
-    # --- Prywatne Metody Pomocnicze ---
+    #Metody Pomocnicze
     def _initialize_pygame(self):
         pygame.init()
         pygame.font.init()
@@ -40,16 +39,12 @@ class MiniMetroEnv(gym.Env):
     def _generate_initial_stations(self):
         initial_stations_count = 3
 
-        # 1. Przygotuj unikalne kształty dla stacji początkowych
-        # Używamy `min`, na wypadek, gdyby w configu było mniej niż 3 kształty
         k = min(initial_stations_count, len(config.STATION_SHAPES))
         initial_shapes = random.sample(config.STATION_SHAPES, k=k)
 
-        # 2. Stwórz PIERWSZĄ stację w węższym, centralnym obszarze (25%-75% ekranu)
         first_x = random.randint(int(config.SCREEN_WIDTH * 0.25), int(config.SCREEN_WIDTH * 0.75))
         first_y = random.randint(int(config.SCREEN_HEIGHT * 0.25), int(config.SCREEN_HEIGHT * 0.75))
 
-        # Używamy poprawnego, dwuetapowego tworzenia obiektu (Model -> Obiekt)
         station_model = StationModel(
             station_id=self._get_new_station_id(),
             pos=(first_x, first_y),
@@ -60,30 +55,23 @@ class MiniMetroEnv(gym.Env):
         self.G.add_node(station_model.station_id, pos=station_model.pos)
         print(f"Dodano początkową stację: {new_station.data.shape} w ({first_x}, {first_y})")
 
-        # 3. Stwórz POZOSTAŁE stacje w pobliżu już istniejących
         while len(self.stations) < initial_stations_count:
-            # Wybierz losową z już istniejących stacji jako punkt odniesienia
             neighbour_station = random.choice(self.stations)
 
-            # Pętla próbująca znaleźć odpowiednie miejsce (max 100 prób dla bezpieczeństwa)
             spawned = False
             attempts = 0
             while not spawned and attempts < 100:
-                # Używamy promienia 15% z Twojego preferowanego kodu
                 radius = config.SCREEN_WIDTH * 0.15
 
                 x = random.randint(int(neighbour_station.pos.x - radius), int(neighbour_station.pos.x + radius))
                 y = random.randint(int(neighbour_station.pos.y - radius), int(neighbour_station.pos.y + radius))
 
-                # Sprawdzamy, czy stacja nie jest za blisko krawędzi
                 if not (50 < x < config.SCREEN_WIDTH - 50 and 50 < y < config.SCREEN_HEIGHT - 50):
                     attempts += 1
-                    continue  # Jeśli jest za blisko, spróbuj ponownie
+                    continue
 
-                # Sprawdzamy minimalną odległość od innych stacji
                 new_pos_vec = pygame.Vector2(x, y)
                 if all(new_pos_vec.distance_to(s.pos) > config.STATION_MIN_DISTANCE for s in self.stations):
-                    # Poprawne tworzenie obiektu
                     station_model = StationModel(
                         station_id=self._get_new_station_id(),
                         pos=(x, y),
@@ -93,7 +81,7 @@ class MiniMetroEnv(gym.Env):
                     self.stations.append(new_station)
                     self.G.add_node(station_model.station_id, pos=station_model.pos)
                     print(f"Dodano początkową stację: {new_station.data.shape} w ({x}, {y})")
-                    spawned = True  # Sukces, przerywamy pętlę prób
+                    spawned = True
 
                 attempts += 1
 
@@ -102,14 +90,14 @@ class MiniMetroEnv(gym.Env):
         selected_color = config.LINE_COLORS[self.selected_line_index]
         current_line = next((line for line in self.lines if line.data.color == selected_color), None)
 
-        if line_action_type == 0:  # Połącz/przedłuż stacje
+        if line_action_type == 0:
             if not (0 <= p1 < len(self.stations) and 0 <= p2 < len(self.stations) and p1 != p2):
                 return -0.1
 
             s1, s2 = self.stations[p1], self.stations[p2]
             distance = s1.pos.distance_to(s2.pos)
 
-            if current_line is None:  # Tworzenie nowej linii
+            if current_line is None:
                 if self.available_trains <= 0: return -0.2
 
                 line_model = LineModel(color=selected_color, station_ids=[s1.data.station_id, s2.data.station_id])
@@ -128,7 +116,7 @@ class MiniMetroEnv(gym.Env):
                 self.trains.append(Train(train_model, new_line))
                 self.available_trains -= 1
                 return 0.5
-            else:  # Rozszerzanie istniejącej linii
+            else:
                 success = False
                 if current_line.stations[-1].data.station_id == s1.data.station_id and current_line.add_station(s2):
                     success = True
@@ -144,25 +132,16 @@ class MiniMetroEnv(gym.Env):
 
         elif line_action_type == 1:  # Usuń linię
             if current_line:
-                # <<< POCZĄTEK NOWEJ, NIEZAWODNEJ LOGIKI USUWANIA KRAWĘDZI >>>
-
-                # 1. Pobierz listę obiektów stacji bezpośrednio z linii, którą usuwamy
                 station_objects_on_line = current_line.stations
                 color_key = str(current_line.data.color)
 
-                # 2. Iteruj wzdłuż linii i usuwaj każdy segment (krawędź) po kolei
                 for i in range(len(station_objects_on_line) - 1):
-                    # Pobierz ID stacji początkowej i końcowej dla danego segmentu
                     u_id = station_objects_on_line[i].data.station_id
                     v_id = station_objects_on_line[i + 1].data.station_id
 
-                    # Bezpiecznie usuń krawędź, jeśli istnieje
                     if self.G.has_edge(u_id, v_id, key=color_key):
                         self.G.remove_edge(u_id, v_id, key=color_key)
 
-                # < KONIEC NOWEJ LOGIKI >
-
-                # Logika "ewakuacji" pasażerów pozostaje bez zmian
                 trains_to_remove = [t for t in self.trains if t.line == current_line]
                 for train in trains_to_remove:
                     last_station = next(
@@ -175,7 +154,6 @@ class MiniMetroEnv(gym.Env):
                 self.trains = [t for t in self.trains if t.line != current_line]
                 self.available_trains += len(trains_to_remove)
 
-                # Usuń samą linię
                 self.lines.remove(current_line)
                 return 0.1
 
@@ -218,10 +196,8 @@ class MiniMetroEnv(gym.Env):
         return -0.01
 
     def _update_passenger_spawning(self):
-        # ZMIANA: Zamiast dodawać czas w ms, po prostu zliczamy klatki (kroki)
         self.passenger_spawn_timer += 1
 
-        # ZMIANA: Porównujemy z nową wartością z configu wyrażoną w klatkach
         if self.passenger_spawn_timer >= config.PASSENGER_SPAWN_RATE_FRAMES:
             self.passenger_spawn_timer = 0
             if not self.stations: return
@@ -248,7 +224,6 @@ class MiniMetroEnv(gym.Env):
         return reward
 
     def _update_station_spawning(self):
-        # Warunki początkowe pozostają bez zmian sprawdzają, czy w ogóle powinniśmy próbować tworzyć stację
         if len(self.stations) >= config.MAX_STATIONS or self.spawned_stations_this_week >= config.STATIONS_TO_SPAWN_PER_WEEK:
             return
         if self.week_timer < config.STATION_SPAWN_TIMES[self.spawned_stations_this_week]:
@@ -258,31 +233,26 @@ class MiniMetroEnv(gym.Env):
         attempts = 0
         max_attempts = 100
 
-        # Główna pętla jest teraz zgodna z Twoim preferowanym kodem
         while not spawned and attempts < max_attempts:
-            if not self.stations: return  # Zabezpieczenie na wypadek braku stacji
+            if not self.stations: return
 
             neighbour_station = random.choice(self.stations)
 
-            # Zmniejszony promień losowania pozycji do 12% wymiarów ekranu
             x_radius = config.SCREEN_WIDTH * 0.12
             y_radius = config.SCREEN_HEIGHT * 0.12
 
             x = random.randint(round(neighbour_station.pos.x - x_radius), round(neighbour_station.pos.x + x_radius))
             y = random.randint(round(neighbour_station.pos.y - y_radius), round(neighbour_station.pos.y + y_radius))
 
-            # Pętla zapewniająca, że stacja nie pojawi się zbyt blisko krawędzi ekranu
             while not (20 < x < config.SCREEN_WIDTH - 20 and 20 < y < config.SCREEN_HEIGHT - 20):
                 x = random.randint(round(neighbour_station.pos.x - x_radius), round(neighbour_station.pos.x + x_radius))
                 y = random.randint(round(neighbour_station.pos.y - y_radius), round(neighbour_station.pos.y + y_radius))
 
             new_pos_vec = pygame.Vector2(x, y)
 
-            # Sprawdzenie minimalnej odległości od innych stacji
             if all(new_pos_vec.distance_to(s.pos) > config.STATION_MIN_DISTANCE for s in self.stations):
                 shape = random.choice(config.STATION_SHAPES)
 
-                # Tworzenie stacji zgodnie z architekturą środowiska (Model -> Obiekt)
                 station_model = StationModel(
                     station_id=self._get_new_station_id(),
                     pos=(x, y),
@@ -290,11 +260,9 @@ class MiniMetroEnv(gym.Env):
                 )
                 new_station = Station(station_model)
 
-                # Dodanie stacji do stanu gry
                 self.stations.append(new_station)
                 self.G.add_node(station_model.station_id, pos=station_model.pos)
 
-                # Ta linia jest kluczowa dla logiki gry, dlatego została zachowana
                 self.all_passengers_plan_update()
 
                 print(f"Nowa stacja ({shape}) pojawiła się w Tygodniu {self.week_number}.")
@@ -303,7 +271,6 @@ class MiniMetroEnv(gym.Env):
 
             attempts += 1
 
-        # Komunikat, jeśli nie udało się znaleźć miejsca na stację
         if not spawned and len(self.stations) < config.MAX_STATIONS:
             print(f"Nie udało się dodać nowej stacji w Tygodniu {self.week_number} po {max_attempts} próbach.")
 
@@ -367,42 +334,34 @@ class MiniMetroEnv(gym.Env):
         self.screen.blit(week_text, week_rect)
 
     def travel_planner_for_new_passenger(self, passenger_model: PassengerModel):
-        """Wersja uproszczona: od razu szuka całej ścieżki."""
         best_path = None
         min_distance = float('inf')
 
-        # Znajdź wszystkie możliwe stacje docelowe
         target_stations = [s for s in self.stations if s.data.shape == passenger_model.target_shape]
 
         for station in target_stations:
             try:
-                # Od razu próbuj znaleźć całą ścieżkę
                 path = nx.dijkstra_path(
                     self.G,
                     source=passenger_model.origin_station_id,
                     target=station.data.station_id,
                     weight='weight'
                 )
-                # Jeśli się udało, oblicz jej wagę (dystans)
                 distance = nx.path_weight(self.G, path, 'weight')
 
-                # Jeśli ta ścieżka jest lepsza niż dotychczasowa najlepsza, zapisz ją
                 if distance < min_distance:
                     min_distance = distance
                     best_path = path
 
             except nx.NetworkXNoPath:
-                # Jeśli do tej stacji nie ma ścieżki, po prostu ją zignoruj
                 continue
 
-        # Po sprawdzeniu wszystkich opcji, przypisz najlepszą znalezioną ścieżkę
         if best_path:
             passenger_model.travel_list = best_path[1:]
         else:
             passenger_model.travel_list = []
 
     def all_passengers_plan_update(self):
-        """Wersja uproszczona dla wszystkich pasażerów."""
         for station_obj in self.stations:
             for p_model in station_obj.data.passengers:
                 best_path = None
@@ -423,7 +382,6 @@ class MiniMetroEnv(gym.Env):
                         if distance < min_distance:
                             min_distance = distance
                             best_path = path
-                        # Logika losowego wyboru przy tym samym dystansie
                         elif distance == min_distance:
                             if random.choice([True, False]):
                                 best_path = path
@@ -437,51 +395,40 @@ class MiniMetroEnv(gym.Env):
                     p_model.travel_list = []
 
     def _get_action_masks(self) -> dict:
-        """Generuje i zwraca słownik masek dla wszystkich poziomów akcji."""
         num_current_stations = len(self.stations)
 
-        # 1. Maska dla akcji wysokiego poziomu
         high_level_mask = np.ones(4, dtype=np.int8)
         if self.available_trains <= 0:
-            high_level_mask[2] = 0  # Zablokuj "deploy_train", jeśli nie ma dostępnych pociągów
+            high_level_mask[2] = 0
 
-        # 2. Maska dla akcji "manage_line"
         manage_line_mask = np.zeros((3, config.MAX_STATIONS, config.MAX_STATIONS), dtype=np.int8)
         selected_color = config.LINE_COLORS[self.selected_line_index]
         current_line = next((line for line in self.lines if line.data.color == selected_color), None)
 
-        # Logika dla akcji typu 0: Połącz/przedłuż
-        if current_line is None:  # Tworzenie nowej linii
+        if current_line is None:
             for i in range(num_current_stations):
                 for j in range(num_current_stations):
                     if i != j:
-                        manage_line_mask[0, i, j] = 1  # Odblokuj tworzenie linii między dowolnymi dwiema stacjami
-        else:  # Rozszerzanie istniejącej linii
+                        manage_line_mask[0, i, j] = 1
+        else:
             if len(current_line.stations) > 1:
                 endpoints = [current_line.stations[0], current_line.stations[-1]]
                 endpoint_indices = [self.stations.index(s) for s in endpoints if s in self.stations]
 
                 for ep_idx in endpoint_indices:
                     for j in range(num_current_stations):
-                        # Można łączyć tylko z stacją, której nie ma jeszcze na linii
                         if self.stations[j] not in current_line.stations:
-                            manage_line_mask[0, ep_idx, j] = 1  # p1 musi być endpointem
+                            manage_line_mask[0, ep_idx, j] = 1
 
-        # Logika dla akcji typu 1: Usuń linię
         if current_line is not None:
-            # Ta akcja nie zależy od parametrów stacji, więc odblokowujemy wszystko.
-            # Agent i tak wybierze losowe p1, p2, ale handler je zignoruje.
             manage_line_mask[1, :, :] = 1
 
-        # 3. Maska dla akcji "deploy_train"
         deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
         if self.available_trains > 0:
             for i, station in enumerate(self.stations):
-                # Sprawdź, czy przez stację przechodzi jakakolwiek linia
                 if any(station.data.station_id in line.data.station_ids for line in self.lines):
                     deploy_train_mask[i] = 1
 
-        # 4. Maska dla akcji "select_line"
         select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
 
         return {
@@ -517,7 +464,6 @@ class MiniMetroEnv(gym.Env):
         # Definiujemy maksymalną możliwą liczbę krawędzi w grafie (w obie strony)
         MAX_EDGES = config.MAX_STATIONS * (config.MAX_STATIONS - 1)
 
-        # --- Finalna definicja przestrzeni obserwacji ---
 
         self.observation_space = spaces.Dict({
             # Cechy globalne całej gry (wynik, tydzień, pociągi, czas)
@@ -577,7 +523,6 @@ class MiniMetroEnv(gym.Env):
         edge_list = []
         edge_feature_list = []
 
-        # ZMIANA: Dodajemy `keys = True` do pętli, aby poprawnie iterować po MultiGraph
         for u_id, v_id, key, edge_data in self.G.edges(data=True, keys=True):
             if u_id in station_id_to_idx and v_id in station_id_to_idx:
                 u, v = station_id_to_idx[u_id], station_id_to_idx[v_id]
@@ -598,7 +543,6 @@ class MiniMetroEnv(gym.Env):
         edge_index = np.zeros(self.observation_space["edge_index"].shape, dtype=np.int32)
         edge_features = np.zeros(self.observation_space["edge_features"].shape, dtype=np.float32)
         if num_edges > 0:
-            # Zabezpieczenie przed przekroczeniem maksymalnej liczby krawędzi
             if num_edges > self.observation_space["edge_index"].shape[1]:
                 edge_list = edge_list[:self.observation_space["edge_index"].shape[1]]
                 edge_feature_list = edge_feature_list[:self.observation_space["edge_index"].shape[1]]
@@ -616,7 +560,6 @@ class MiniMetroEnv(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
-        # POPRAWKA 1: Dodajemy wywołanie super().reset() na początku
         super().reset(seed=seed)
 
         if self.screen is None and self.render_mode == "human":
@@ -635,7 +578,6 @@ class MiniMetroEnv(gym.Env):
         self.lines: List[Line] = []
         self.trains: List[Train] = []
 
-        # POPRAWKA 2: Używamy MultiGraph, aby zezwolić na wiele linii między stacjami
         self.G = nx.MultiGraph()
         self.passenger_spawn_timer = 0
         self.spawned_stations_this_week = 0

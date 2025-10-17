@@ -1,5 +1,3 @@
-# Wklej ten kod jako zawartość pliku config.py
-
 import pygame
 
 # --- USTAWIENIA EKRANU I GRY ---
@@ -30,11 +28,6 @@ MAX_STATIONS = 40
 STATIONS_TO_SPAWN_PER_WEEK = 5
 
 # --- USTAWIENIA PASAŻERÓW ---
-# Stara wartość, już nieużywana przez logikę gry, ale zostawiona dla kontekstu
-# PASSENGER_SPAWN_RATE = 6000 w milisekundach
-
-# NOWA WARTOŚĆ w klatkach (steps) dla logiki niezależnej od czasu rzeczywistego
-# Obliczenie: 6000 ms = 6 sekund. Przy 60 FPS -> 6 * 60 = 360 klatek.
 PASSENGER_SPAWN_RATE_FRAMES = 360
 
 PASSENGER_ICON_SIZE = 10

@@ -1,4 +1,3 @@
-# utils.py
 import pygame
 from data_models import Shape, Color
 

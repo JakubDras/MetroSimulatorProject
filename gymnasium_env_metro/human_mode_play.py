@@ -1,18 +1,11 @@
 import pygame
 import sys
 import numpy as np
-
-# Importujemy nasze środowisko oraz stałe
 from environment import MiniMetroEnv
 import config
 
 
 class HumanPlayer:
-    """
-    Klasa enkapsulująca logikę sterowania przez człowieka.
-    Przechowuje stan interakcji, np. która stacja została kliknięta jako pierwsza.
-    """
-
     def __init__(self, env: MiniMetroEnv):
         self.env = env
         self.first_station_clicked_idx = None
@@ -39,7 +32,6 @@ class HumanPlayer:
 
         # --- LEWY PRZYCISK MYSZY ---
         if event.button == 1:
-            # 1. Sprawdź kliknięcie w UI
             for i, rect in enumerate(self.env.ui_circles_rects):
                 if rect.collidepoint(mouse_pos):
                     action["high_level_action"] = 3
@@ -52,14 +44,12 @@ class HumanPlayer:
                 print(f"Tryb rozmieszczania pociągu: {'Włączony' if self.deploy_train_mode else 'Wyłączony'}")
                 return self._create_noop_action()
 
-            # 2. Sprawdź kliknięcie w stacje
             clicked_station_idx = None
             for i, station in enumerate(self.env.stations):
                 if station.is_clicked(mouse_pos):
                     clicked_station_idx = i
                     break
 
-            # 3. Logika akcji w zależności od trybu
             if self.deploy_train_mode:
                 if clicked_station_idx is not None:
                     action["high_level_action"] = 2
@@ -88,7 +78,7 @@ class HumanPlayer:
             selected_color = config.LINE_COLORS[self.env.selected_line_index]
             if any(line.data.color == selected_color for line in self.env.lines):
                 action["high_level_action"] = 1
-                action["low_level_params"][0] = 1  # Typ akcji "usuń linię"
+                action["low_level_params"][0] = 1
                 print(f"Akcja: Usuń linię o kolorze {selected_color}")
             self.first_station_clicked_idx = None
 
@@ -110,11 +100,9 @@ class HumanPlayer:
 
 
 if __name__ == "__main__":
-    # Inicjalizacja środowiska w trybie renderowania dla człowieka
     env = MiniMetroEnv(render_mode="human")
     obs, info = env.reset()
 
-    # Stworzenie obiektu gracza
     player = HumanPlayer(env)
 
     print("--- MiniMetro Gym Environment: Tryb Gry ---")
@@ -129,13 +117,11 @@ if __name__ == "__main__":
     while running:
         action_to_take = player._create_noop_action()
 
-        # Zbierz akcję od gracza na podstawie jednego zdarzenia
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
                 break
 
-            # Pobierz akcję od gracza (jeśli jakaś była)
             mapped_action = player.get_action(event)
             if mapped_action["high_level_action"] != 0:
                 action_to_take = mapped_action
@@ -143,7 +129,6 @@ if __name__ == "__main__":
         if not running:
             break
 
-        # Wykonaj krok w środowisku
         obs, reward, terminated, truncated, info = env.step(action_to_take)
         env.render()
 

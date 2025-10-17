@@ -1,7 +1,5 @@
-# models.py
 from pydantic import BaseModel, Field
 from typing import List, Tuple, Literal
-import pygame
 
 # --- Definicje typów dla czytelności ---
 Color = Tuple[int, int, int]
