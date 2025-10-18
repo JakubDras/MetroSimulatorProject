@@ -1,5 +1,3 @@
-# plik: gymnasium_env_metro/models/graph_transformer_model.py
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
