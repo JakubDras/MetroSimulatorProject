@@ -6,9 +6,9 @@ import random
 import networkx as nx
 from typing import List
 
-import config
-from data_models import StationModel, LineModel, TrainModel, PassengerModel
-from entities import Station, Line, Train
+from . import config
+from .data_models import StationModel, LineModel, TrainModel, PassengerModel
+from .entities import Station, Line, Train
 
 
 class MiniMetroEnv(gym.Env):

@@ -2,9 +2,9 @@ import pygame
 import random
 from typing import List
 
-from data_models import StationModel, LineModel, TrainModel
-import config
-from utils import draw_passenger_icon
+from .data_models import StationModel, LineModel, TrainModel
+from . import config
+from .utils import draw_passenger_icon
 
 
 class Station:

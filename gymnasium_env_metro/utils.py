@@ -1,5 +1,5 @@
 import pygame
-from data_models import Shape, Color
+from .data_models import Shape, Color
 
 def draw_passenger_icon(surface: pygame.Surface, shape: Shape, color: Color, center_pos: pygame.Vector2, size: int):
     half_size = size // 2
