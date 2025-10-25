@@ -395,48 +395,62 @@ class MiniMetroEnv(gym.Env):
                     p_model.travel_list = []
 
     def _get_action_masks(self) -> dict:
+        """Generuje i zwraca słownik masek dla wszystkich poziomów akcji."""
         num_current_stations = len(self.stations)
 
-        high_level_mask = np.ones(4, dtype=np.int8)
-        if self.available_trains <= 0:
-            high_level_mask[2] = 0
-
+        # --- Inicjalizacja masek ---
         manage_line_mask = np.zeros((3, config.MAX_STATIONS, config.MAX_STATIONS), dtype=np.int8)
+        manage_line_type_mask = np.zeros(3, dtype=np.int8)
+        deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
+        select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
+        high_level_mask = np.ones(4, dtype=np.int8)
+
+        # --- Logika dla maski "manage_line" ---
         selected_color = config.LINE_COLORS[self.selected_line_index]
         current_line = next((line for line in self.lines if line.data.color == selected_color), None)
 
         if current_line is None:
+            # Przypadek 1: Tworzenie nowej linii
+            manage_line_type_mask[0] = 1
             for i in range(num_current_stations):
                 for j in range(num_current_stations):
                     if i != j:
                         manage_line_mask[0, i, j] = 1
         else:
+            # Przypadek 2: Zarządzanie istniejącą linią
+            manage_line_type_mask[0] = 1  # Dostępna akcja "extend"
+            manage_line_type_mask[1] = 1  # Dostępna akcja "remove"
+
+            # Maska dla rozszerzania (typ 0)
             if len(current_line.stations) > 1:
                 endpoints = [current_line.stations[0], current_line.stations[-1]]
                 endpoint_indices = [self.stations.index(s) for s in endpoints if s in self.stations]
-
                 for ep_idx in endpoint_indices:
                     for j in range(num_current_stations):
                         if self.stations[j] not in current_line.stations:
                             manage_line_mask[0, ep_idx, j] = 1
 
-        if current_line is not None:
-            manage_line_mask[1, :, :] = 1
+            # Maska dla usuwania (typ 1) nie wymaga parametrów p1, p2, więc zostaje pusta.
 
-        deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
+        # --- Logika dla maski "deploy_train" ---
         if self.available_trains > 0:
             for i, station in enumerate(self.stations):
                 if any(station.data.station_id in line.data.station_ids for line in self.lines):
                     deploy_train_mask[i] = 1
 
-        select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
+        # --- Logika dla maski wysokiego poziomu ---
+        if self.available_trains <= 0 or not np.any(deploy_train_mask):
+            high_level_mask[2] = 0
 
+        # --- Zwrócenie słownika z kompletem masek ---
         return {
             "high_level": high_level_mask,
             "manage_line": manage_line_mask,
             "deploy_train": deploy_train_mask,
             "select_line": select_line_mask,
+            "manage_line_type": manage_line_type_mask
         }
+
     def __init__(self, render_mode=None):
         super().__init__()
         self.render_mode = render_mode

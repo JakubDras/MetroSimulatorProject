@@ -1,9 +1,8 @@
 import pygame
 import sys
 import numpy as np
-from environment import MiniMetroEnv
-import config
-
+from gymnasium_env_metro.environment import MiniMetroEnv
+import gymnasium_env_metro.config as config
 
 class HumanPlayer:
     def __init__(self, env: MiniMetroEnv):
