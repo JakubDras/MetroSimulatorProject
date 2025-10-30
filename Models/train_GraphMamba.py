@@ -1,30 +1,24 @@
 import os
 import pytorch_lightning as pl
 from gymnasium_env_metro.environment import MiniMetroEnv
+import gymnasium_env_metro.config as config
 from model_trainer import PPOTrainer
 
-from model.GraphMamba import GraphMambaHFModel
+from model.GraphMamba import GraphMamba
 
 if __name__ == "__main__":
 
     env = MiniMetroEnv()
+
     num_node_features = env.observation_space["node_features"].shape[1]
     num_stations = env.observation_space["node_features"].shape[0]
+    num_line_colors = len(config.LINE_COLORS)
 
-    MAMBA_MODEL_NAME = "state-spaces/mamba-130m-slimpj"
-
-    #Fixed number don't touch
-    HIDDEN_DIM = 768
-
-    print(f"Tworzenie modelu GraphMambaHF z użyciem pre-trenowanego '{MAMBA_MODEL_NAME}'...")
-    print("UWAGA: Przy pierwszym uruchomieniu nastąpi pobieranie modelu, co może potrwać kilka minut.")
-
-    model_to_train = GraphMambaHFModel(
+    model_to_train = GraphMamba(
         num_node_features=num_node_features,
-        hidden_dim=HIDDEN_DIM,
+        hidden_dim=32,
         num_stations=num_stations,
-        mamba_model_name=MAMBA_MODEL_NAME,
-        freeze_mamba=True
+        num_line_colors=num_line_colors
     )
 
     ppo_system = PPOTrainer(model=model_to_train, env=env, lr=3e-4)
@@ -32,10 +26,10 @@ if __name__ == "__main__":
     trainer = pl.Trainer(
         max_epochs=10000,
         accelerator="auto",
-        logger=pl.loggers.TensorBoardLogger("logs/", name="GraphMambaHF")
+        logger=pl.loggers.TensorBoardLogger("logs/", name="GraphMamba")
     )
 
-    print("Rozpoczynanie treningu z modelem GraphMambaHF...")
+    print("Rozpoczynanie treningu z modelem Graph Mamba...")
     trainer.fit(ppo_system)
 
     print("Trening zakończony.")
