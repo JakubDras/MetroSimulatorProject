@@ -48,9 +48,9 @@ class GraphTransformerModel(nn.Module):
         logits = {
             "high_level": self.high_level_head(graph_embedding),
             "manage_line_type": self.manage_line_type_head(graph_embedding),
-            "manage_line_p1": self.manage_line_p1_head(node_embeddings),
-            "manage_line_p2": self.manage_line_p2_head(node_embeddings),
-            "deploy_train": self.deploy_train_head(node_embeddings),
+            "manage_line_p1": self.manage_line_p1_head(graph_embedding),  # POPRAWKA
+            "manage_line_p2": self.manage_line_p2_head(graph_embedding),  # POPRAWKA
+            "deploy_train": self.deploy_train_head(graph_embedding),  # POPRAWKA
             "select_line": self.select_line_head(graph_embedding)
         }
         return value, logits
