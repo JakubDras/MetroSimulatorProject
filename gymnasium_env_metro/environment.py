@@ -505,11 +505,20 @@ class MiniMetroEnv(gym.Env):
                                           dtype=np.int8),
                 "deploy_train": spaces.Box(low=0, high=1, shape=(config.MAX_STATIONS,), dtype=np.int8),
                 "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8)
-            })
+            }),
+
+            "num_edges": spaces.Box(low=0, high=MAX_EDGES, shape=(1,), dtype=np.int32
+            ),
+
+            "num_nodes": spaces.Box(low=0, high=config.MAX_STATIONS, shape=(1,), dtype=np.int32
+            ),
+
         })
 
     def _get_obs(self) -> dict:
         station_id_to_idx = {s.data.station_id: i for i, s in enumerate(self.stations)}
+
+        num_current_stations = len(self.stations)
 
         global_features = np.array([
             self.score,
@@ -570,7 +579,9 @@ class MiniMetroEnv(gym.Env):
             "node_features": node_features,
             "edge_index": edge_index,
             "edge_features": edge_features,
-            "action_masks": self._get_action_masks()
+            "action_masks": self._get_action_masks(),
+            "num_edges": np.array([num_edges], dtype=np.int32),
+            "num_nodes": np.array([num_current_stations], dtype=np.int32),
         }
 
     def reset(self, seed=None, options=None):
