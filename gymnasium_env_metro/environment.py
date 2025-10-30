@@ -403,44 +403,88 @@ class MiniMetroEnv(gym.Env):
         manage_line_type_mask = np.zeros(3, dtype=np.int8)
         deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
         select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
-        high_level_mask = np.ones(4, dtype=np.int8)
 
-        # --- Logika dla maski "manage_line" ---
+        # Maska wysokiego poziomu: [0: noop, 1: manage, 2: deploy, 3: select]
+        # Zaczynamy z włączonymi tylko akcjami, które są zawsze "możliwe" (nawet jeśli nic nie robią).
+        # Akcje [1] i [2] włączymy dynamicznie, jeśli będą dla nich dostępne pod-akcje.
+        high_level_mask = np.array([1, 0, 0, 1], dtype=np.int8)
+
+        # --- Logika dla maski "manage_line" (Akcja 1) ---
         selected_color = config.LINE_COLORS[self.selected_line_index]
         current_line = next((line for line in self.lines if line.data.color == selected_color), None)
 
         if current_line is None:
-            # Przypadek 1: Tworzenie nowej linii
-            manage_line_type_mask[0] = 1
-            for i in range(num_current_stations):
-                for j in range(num_current_stations):
-                    if i != j:
-                        manage_line_mask[0, i, j] = 1
+            # Przypadek 1: Tworzenie nowej linii (Typ 0)
+            # Możliwe tylko, jeśli mamy co najmniej 2 stacje
+            if num_current_stations >= 2:
+                manage_line_type_mask[0] = 1  # Włącz tworzenie
+                for i in range(num_current_stations):
+                    for j in range(num_current_stations):
+                        if i != j:
+                            manage_line_mask[0, i, j] = 1
         else:
             # Przypadek 2: Zarządzanie istniejącą linią
-            manage_line_type_mask[0] = 1  # Dostępna akcja "extend"
-            manage_line_type_mask[1] = 1  # Dostępna akcja "remove"
 
-            # Maska dla rozszerzania (typ 0)
-            if len(current_line.stations) > 1:
+            # Akcja: Usuń linię (Typ 1)
+            # Zawsze można usunąć istniejącą linię.
+            manage_line_type_mask[1] = 1
+            # UWAGA: Twój model_trainer.py poprawnie pomija próbkowanie p1/p2 dla typu 1,
+            # więc NIE POTRZEBUJEMY "sztucznej" maski (np. manage_line_mask[1, 0, 0] = 1).
+            # To jest poprawne zachowanie.
+
+            # Akcja: Rozszerz linię (Typ 0)
+            # Musimy znaleźć jakiekolwiek możliwe rozszerzenia.
+            possible_extensions_found = False
+
+            if len(current_line.stations) == 1:
+                # Jeśli linia ma 1 stację, można ją rozszerzyć do dowolnej innej stacji
+                if num_current_stations > 1:
+                    try:
+                        ep_idx = self.stations.index(current_line.stations[0])
+                        for j in range(num_current_stations):
+                            if j != ep_idx:  # Nie łącz stacji sama ze sobą
+                                manage_line_mask[0, ep_idx, j] = 1
+                                possible_extensions_found = True
+                    except ValueError:
+                        pass  # Stacja z linii nie istnieje już w self.stations (błąd integralności?)
+
+            elif len(current_line.stations) > 1:
+                # Jeśli linia ma >1 stacji, można ją rozszerzyć tylko z końców
                 endpoints = [current_line.stations[0], current_line.stations[-1]]
                 endpoint_indices = [self.stations.index(s) for s in endpoints if s in self.stations]
+
                 for ep_idx in endpoint_indices:
                     for j in range(num_current_stations):
+                        # Można rozszerzyć do stacji, której jeszcze nie ma na linii
                         if self.stations[j] not in current_line.stations:
                             manage_line_mask[0, ep_idx, j] = 1
+                            possible_extensions_found = True
 
-            # Maska dla usuwania (typ 1) nie wymaga parametrów p1, p2, więc zostaje pusta.
+            # (Jeśli len(current_line.stations) == 0, possible_extensions_found zostaje False)
 
-        # --- Logika dla maski "deploy_train" ---
+            # KLUCZOWA POPRAWKA (naprawia błąd NaN):
+            # Włącz akcję typu "rozszerz" (Typ 0) TYLKO WTEDY,
+            # gdy znaleźliśmy dla niej jakiekolwiek ważne akcje p1/p2.
+            if possible_extensions_found:
+                manage_line_type_mask[0] = 1
+
+        # --- Logika dla maski "deploy_train" (Akcja 2) ---
         if self.available_trains > 0:
             for i, station in enumerate(self.stations):
+                # Pociąg można dodać na stacji, która należy do JAKIEJKOLWIEK linii
                 if any(station.data.station_id in line.data.station_ids for line in self.lines):
                     deploy_train_mask[i] = 1
 
-        # --- Logika dla maski wysokiego poziomu ---
-        if self.available_trains <= 0 or not np.any(deploy_train_mask):
-            high_level_mask[2] = 0
+        # --- Finalizacja maski wysokiego poziomu ---
+
+        # Włącz "manage_line", jeśli jakakolwiek pod-akcja (tworzenie, usuwanie, rozszerzanie) jest możliwa
+        if np.any(manage_line_type_mask):
+            high_level_mask[1] = 1
+
+        # Włącz "deploy_train", jeśli jakakolwiek pod-akcja (stacja docelowa) jest możliwa
+        # (Warunek `available_trains > 0` jest już zawarty w logice deploy_train_mask)
+        if np.any(deploy_train_mask):
+            high_level_mask[2] = 1
 
         # --- Zwrócenie słownika z kompletem masek ---
         return {
