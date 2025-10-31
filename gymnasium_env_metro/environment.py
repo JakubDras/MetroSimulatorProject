@@ -115,6 +115,8 @@ class MiniMetroEnv(gym.Env):
                 )
                 self.trains.append(Train(train_model, new_line))
                 self.available_trains -= 1
+
+                self.all_passengers_plan_update()  # <-- DODANO TUTAJ
                 return 0.5
             else:
                 success = False
@@ -128,6 +130,8 @@ class MiniMetroEnv(gym.Env):
                     current_line.data.station_ids = [s.data.station_id for s in current_line.stations]
                     self.G.add_edge(s1.data.station_id, s2.data.station_id, key=str(selected_color),
                                     color=selected_color, weight=distance)
+
+                    self.all_passengers_plan_update()  # <-- DODANO TUTAJ
                     return 0.1
 
         elif line_action_type == 1:  # Usuń linię
@@ -155,6 +159,8 @@ class MiniMetroEnv(gym.Env):
                 self.available_trains += len(trains_to_remove)
 
                 self.lines.remove(current_line)
+
+                self.all_passengers_plan_update()  # <-- DODANO TUTAJ
                 return 0.1
 
         return -0.05
@@ -673,7 +679,7 @@ class MiniMetroEnv(gym.Env):
             reward += self._update_trains()
             self._update_station_spawning()
             reward += self._update_week_timer()
-            self.all_passengers_plan_update()
+            # Usunięto stąd 'self.all_passengers_plan_update()'
 
         return self._get_obs(), reward, self.game_over, False, self._get_info()
 

@@ -156,6 +156,11 @@ class PPOTrainer(pl.LightningModule):
 
         indices = np.arange(self.hparams.rollout_len)
 
+        # Inicjalizacja zmiennych loss poza pętlą, aby były dostępne dla log_dict
+        loss = torch.tensor(0.0, device=self.device)
+        policy_loss = torch.tensor(0.0, device=self.device)
+        value_loss = torch.tensor(0.0, device=self.device)
+
         for _ in range(self.hparams.ppo_epochs):
             np.random.shuffle(indices)
             for start in range(0, self.hparams.rollout_len, self.hparams.batch_size):
@@ -197,7 +202,25 @@ class PPOTrainer(pl.LightningModule):
                 self.manual_backward(loss)
                 optimizer.step()
 
-        self.log_dict({"train_loss": loss.item(), "policy_loss": policy_loss.item(), "value_loss": value_loss.item()})
+        # --- DODANE METRYKI NAGRÓD ---
+        avg_reward = rollout_data["rewards"].mean().item()
+        total_reward = rollout_data["rewards"].sum().item()
+
+        # --- Zapisywanie logów dla TensorBoard ---
+        self.log_dict({
+            "train_loss": loss.item(),
+            "policy_loss": policy_loss.item(),
+            "value_loss": value_loss.item(),
+            "avg_reward": avg_reward,
+            "total_reward": total_reward
+        })
+
+        # --- NOWY LOG DO TERMINALA (flush=True wymusza natychmiastowe wyświetlenie) ---
+        print(f"\n--- Koniec kroku {self.global_step} ---")
+        print(f"  Avg Reward: {avg_reward:.4f} | Total Reward: {total_reward:.2f}")
+        print(
+            f"  Loss: {loss.item():.4f} | Policy Loss: {policy_loss.item():.4f} | Value Loss: {value_loss.item():.4f}")
+        print(f"  Pasek postępu PytorchLightning może być opóźniony.")
 
     def configure_optimizers(self):
         return torch.optim.Adam(self.model.parameters(), lr=self.hparams.lr)
