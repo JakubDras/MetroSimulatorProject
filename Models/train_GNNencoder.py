@@ -9,6 +9,7 @@ import time
 
 from model.GNNencoder import GNNModel
 
+
 # --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
@@ -16,6 +17,8 @@ def make_env():
         return env
 
     return _init
+
+
 # ------------------------------------------------
 
 if __name__ == "__main__":
@@ -29,7 +32,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
 
-    NUM_ENVS = 8
+    NUM_ENVS = 7
     print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
 
     temp_env = MiniMetroEnv()
@@ -47,7 +50,7 @@ if __name__ == "__main__":
         num_stations=num_stations
     )
 
-
+    # Hiperparametry ustawione na "złoty środek"
     a2c_system = A2CTrainer(
         model=model_to_train,
         vec_env=vec_env,
@@ -56,9 +59,9 @@ if __name__ == "__main__":
         lr=3e-4,
         gamma=0.99,
         gae_lambda=0.95,
-        ppo_epochs=20,
-        num_steps=128,
-        batch_size=128,
+        ppo_epochs=8,
+        num_steps=512,
+        batch_size=256,
         entropy_coef=0.01
     )
 
@@ -73,12 +76,25 @@ if __name__ == "__main__":
     current_time = time.strftime("%Y-%m-%d_%H-%M-%S")
     RUN_NAME = f"{EXPERIMENT_NAME}_{current_time}"
     LOG_PATH = PROJECT_ROOT / "logs" / RUN_NAME
+    LOG_PATH.mkdir(parents=True, exist_ok=True)  # Upewniamy się, że folder logów istnieje
 
     writer = SummaryWriter(LOG_PATH)
     print(f"Uruchomiono logowanie TensorBoard. Logi w: {LOG_PATH}")
     print(f"Użyj: tensorboard --logdir logs")
 
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
+
+    # --- [EARLY STOPPING] Inicjalizacja zmiennych ---
+    best_avg_score = -float('inf')
+    patience_counter = 0
+
+    # Ilość epok bez poprawy wyniku, po których przerywamy trening.
+    # Możesz dostosować tę wartość.
+    PATIENCE_EPOCHS = 500
+
+    # Ilość epizodów w okienku A2CTrainer (deque=100)
+    EPISODES_FOR_AVG = 100
+    # --- Koniec inicjalizacji ---
 
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
 
@@ -94,6 +110,35 @@ if __name__ == "__main__":
             f"Avg Week: {metrics['avg_episode_week']:.2f} | "
             f"Loss: {metrics['loss']:.4f}"
         )
+
+        # --- [EARLY STOPPING] Logika sprawdzająca ---
+
+        # Sprawdzamy, czy średnia jest już "miarodajna" (czy zapełniło się okienko 100 epizodów)
+        is_ready_to_check = metrics.get("episodes_in_window", 0) >= EPISODES_FOR_AVG
+
+        if is_ready_to_check:
+            current_score = metrics['avg_episode_score']
+
+            if current_score > best_avg_score:
+                # Mamy nowy rekord! Resetujemy "cierpliwość".
+                best_avg_score = current_score
+                patience_counter = 0
+                print(f"\n✨ Nowy najlepszy wynik: {best_avg_score:.2f} w epoce {epoch}. Zapisywanie modelu...")
+
+                # Zapisujemy model, który osiągnął najlepszy wynik
+                torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
+
+            else:
+                # Nie ma poprawy, zwiększamy licznik cierpliwości
+                patience_counter += 1
+
+            if patience_counter >= PATIENCE_EPOCHS:
+                # Osiągnęliśmy limit cierpliwości, przerywamy trening
+                print(f"\n--- 🛑 EARLY STOPPING ---")
+                print(f"Model nie poprawił wyniku {best_avg_score:.2f} przez {PATIENCE_EPOCHS} epok.")
+                print(f"Zatrzymywanie treningu w epoce {epoch}.")
+                break  # Zatrzymuje pętlę 'for epoch ...'
+        # --- Koniec logiki Early Stopping ---
 
     print("Trening zakończony.")
     writer.close()

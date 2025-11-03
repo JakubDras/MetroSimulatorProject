@@ -63,68 +63,97 @@ class A2CTrainer(torch.nn.Module):
     @torch.no_grad()
     def get_actions_and_values(self, obs_gpu: dict, masks_cpu: dict) -> tuple:
         value_batch, logits_batch = self(obs_gpu)
+
+        # --- POCZĄTEK OPTYMALIZACJI A ---
+        # 1. Przenieś WSZYSTKIE maski na GPU RAZ, jako całą paczkę (batch)
+        #    Używamy torch.bool dla wydajności masek.
+        masks_gpu = {
+            k: torch.as_tensor(v, dtype=torch.bool, device=self.device)
+            for k, v in masks_cpu.items()
+        }
+        # --- KONIEC OPTYMALIZACJI A ---
+
         all_hl_actions = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         all_ll_params = torch.zeros((self.num_envs, 3), dtype=torch.long, device=self.device)
         all_log_probs = torch.zeros(self.num_envs, device=self.device)
         all_entropies = torch.zeros(self.num_envs, device=self.device)
+
+        # Ta pętla jest nadal szeregowa (ze względu na zależne próbkowanie),
+        # ale teraz nie wykonuje już kosztownych transferów CPU->GPU wewnątrz.
         for i in range(self.num_envs):
-            hl_mask = torch.as_tensor(masks_cpu["high_level"][i], dtype=torch.bool, device=self.device)
+            # 2. Używaj masek już przeniesionych na GPU
+            hl_mask = masks_gpu["high_level"][i]
             hl_logits_masked = logits_batch["high_level"][i].masked_fill(~hl_mask, -float('inf'))
             hl_dist = Categorical(logits=hl_logits_masked)
             hl_action = hl_dist.sample()
+
             all_hl_actions[i] = hl_action
             log_prob = hl_dist.log_prob(hl_action)
             entropy = hl_dist.entropy()
+
             ll_params = torch.zeros(3, dtype=torch.long, device=self.device)
             action_item = hl_action.item()
+
             if action_item == 1:
-                type_mask = torch.as_tensor(masks_cpu["manage_line_type"][i], dtype=torch.bool, device=self.device)
+                type_mask = masks_gpu["manage_line_type"][i]  # <-- Używamy maski z GPU
                 type_logits = logits_batch["manage_line_type"][i].masked_fill(~type_mask, -float('inf'))
                 type_dist = Categorical(logits=type_logits)
                 type_action = type_dist.sample()
+
                 log_prob += type_dist.log_prob(type_action)
                 entropy += type_dist.entropy()
                 ll_params[0] = type_action
+
                 if type_action.item() == 0:
-                    p1_mask = torch.as_tensor(masks_cpu["manage_line"][i, 0].any(axis=1), dtype=torch.bool,
-                                              device=self.device)
+                    # UWAGA: Ta logika nadal wymaga Optymalizacji B, aby być szybsza.
+                    # Na razie obliczamy ją w pętli, ale na tensorach z GPU.
+                    p1_mask = masks_gpu["manage_line"][i, 0].any(dim=1)  # dim=1 to odpowiednik axis=1
                     p1_logits = logits_batch["manage_line_p1"][i].masked_fill(~p1_mask, -float('inf'))
                     p1_dist = Categorical(logits=p1_logits)
                     p1_action = p1_dist.sample()
+
                     log_prob += p1_dist.log_prob(p1_action)
                     entropy += p1_dist.entropy()
                     ll_params[1] = p1_action
-                    p2_mask = torch.as_tensor(masks_cpu["manage_line"][i, 0, p1_action.item()], dtype=torch.bool,
-                                              device=self.device)
+
+                    p2_mask = masks_gpu["manage_line"][i, 0, p1_action.item()]  # <-- Używamy maski z GPU
                     p2_logits = logits_batch["manage_line_p2"][i].masked_fill(~p2_mask, -float('inf'))
                     p2_dist = Categorical(logits=p2_logits)
                     p2_action = p2_dist.sample()
+
                     log_prob += p2_dist.log_prob(p2_action)
                     entropy += p2_dist.entropy()
                     ll_params[2] = p2_action
+
             elif action_item == 2:
-                mask = torch.as_tensor(masks_cpu["deploy_train"][i], dtype=torch.bool, device=self.device)
+                mask = masks_gpu["deploy_train"][i]  # <-- Używamy maski z GPU
                 logits = logits_batch["deploy_train"][i].masked_fill(~mask, -float('inf'))
                 dist = Categorical(logits=logits)
                 action = dist.sample()
+
                 log_prob += dist.log_prob(action)
                 entropy += dist.entropy()
                 ll_params[1] = action
+
             elif action_item == 3:
-                mask = torch.as_tensor(masks_cpu["select_line"][i], dtype=torch.bool, device=self.device)
+                mask = masks_gpu["select_line"][i]  # <-- Używamy maski z GPU
                 logits = logits_batch["select_line"][i].masked_fill(~mask, -float('inf'))
                 dist = Categorical(logits=logits)
                 action = dist.sample()
+
                 log_prob += dist.log_prob(action)
                 entropy += dist.entropy()
                 ll_params[1] = action
+
             all_ll_params[i] = ll_params
             all_log_probs[i] = log_prob
             all_entropies[i] = entropy
+
         actions_for_env = {
             "high_level_action": all_hl_actions.cpu().numpy(),
             "low_level_params": all_ll_params.cpu().numpy()
         }
+
         return actions_for_env, all_log_probs, value_batch.flatten(), all_entropies
 
     @torch.no_grad()
