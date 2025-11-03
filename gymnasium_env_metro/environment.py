@@ -53,7 +53,7 @@ class MiniMetroEnv(gym.Env):
         new_station = Station(station_model)
         self.stations.append(new_station)
         self.G.add_node(station_model.station_id, pos=station_model.pos)
-        print(f"Dodano początkową stację: {new_station.data.shape} w ({first_x}, {first_y})")
+        #print(f"Dodano początkową stację: {new_station.data.shape} w ({first_x}, {first_y})")
 
         while len(self.stations) < initial_stations_count:
             neighbour_station = random.choice(self.stations)
@@ -80,7 +80,7 @@ class MiniMetroEnv(gym.Env):
                     new_station = Station(station_model)
                     self.stations.append(new_station)
                     self.G.add_node(station_model.station_id, pos=station_model.pos)
-                    print(f"Dodano początkową stację: {new_station.data.shape} w ({x}, {y})")
+                    #print(f"Dodano początkową stację: {new_station.data.shape} w ({x}, {y})")
                     spawned = True
 
                 attempts += 1
@@ -271,14 +271,15 @@ class MiniMetroEnv(gym.Env):
 
                 self.all_passengers_plan_update()
 
-                print(f"Nowa stacja ({shape}) pojawiła się w Tygodniu {self.week_number}.")
+                #print(f"Nowa stacja ({shape}) pojawiła się w Tygodniu {self.week_number}.")
                 spawned = True
                 self.spawned_stations_this_week += 1
 
             attempts += 1
 
         if not spawned and len(self.stations) < config.MAX_STATIONS:
-            print(f"Nie udało się dodać nowej stacji w Tygodniu {self.week_number} po {max_attempts} próbach.")
+            #print(f"Nie udało się dodać nowej stacji w Tygodniu {self.week_number} po {max_attempts} próbach.")
+            pass
 
     def _update_week_timer(self) -> float:
         self.week_timer += 1
@@ -343,24 +344,27 @@ class MiniMetroEnv(gym.Env):
         best_path = None
         min_distance = float('inf')
 
+        try:
+            distances, paths = nx.single_source_dijkstra(
+                self.G,
+                source=passenger_model.origin_station_id,
+                weight='weight'
+            )
+        except (nx.NetworkXNoPath, KeyError):
+            passenger_model.travel_list = []
+            return
+
         target_stations = [s for s in self.stations if s.data.shape == passenger_model.target_shape]
 
         for station in target_stations:
-            try:
-                path = nx.dijkstra_path(
-                    self.G,
-                    source=passenger_model.origin_station_id,
-                    target=station.data.station_id,
-                    weight='weight'
-                )
-                distance = nx.path_weight(self.G, path, 'weight')
+            station_id = station.data.station_id
+
+            if station_id in distances:
+                distance = distances[station_id]
 
                 if distance < min_distance:
                     min_distance = distance
-                    best_path = path
-
-            except nx.NetworkXNoPath:
-                continue
+                    best_path = paths[station_id]
 
         if best_path:
             passenger_model.travel_list = best_path[1:]
@@ -368,32 +372,53 @@ class MiniMetroEnv(gym.Env):
             passenger_model.travel_list = []
 
     def all_passengers_plan_update(self):
+        all_paths_from_all_sources = {}
+
         for station_obj in self.stations:
+            source_id = station_obj.data.station_id
+
+            if source_id not in all_paths_from_all_sources:
+                try:
+                    distances, paths = nx.single_source_dijkstra(
+                        self.G,
+                        source=source_id,
+                        weight='weight'
+                    )
+                    all_paths_from_all_sources[source_id] = (distances, paths)
+                except (nx.NetworkXNoPath, KeyError):
+                    all_paths_from_all_sources[source_id] = (None, None)
+
+            distances, paths = all_paths_from_all_sources[source_id]
+
+            if distances is None:
+                for p_model in station_obj.data.passengers:
+                    p_model.travel_list = []
+                continue
+
+            best_paths_for_shapes = {}
+            min_distances_for_shapes = {}
+
+            for target_station in self.stations:
+                target_id = target_station.data.station_id
+                target_shape = target_station.data.shape
+
+                if target_id == source_id:
+                    continue
+
+                if target_id in distances:
+                    distance = distances[target_id]
+
+                    current_min_dist = min_distances_for_shapes.get(target_shape, float('inf'))
+
+                    if distance < current_min_dist:
+                        min_distances_for_shapes[target_shape] = distance
+                        best_paths_for_shapes[target_shape] = paths[target_id]
+                    elif distance == current_min_dist:
+                        if random.choice([True, False]):
+                            best_paths_for_shapes[target_shape] = paths[target_id]
+
             for p_model in station_obj.data.passengers:
-                best_path = None
-                min_distance = float('inf')
-
-                target_stations = [s for s in self.stations if s.data.shape == p_model.target_shape]
-
-                for target in target_stations:
-                    try:
-                        path = nx.dijkstra_path(
-                            self.G,
-                            source=station_obj.data.station_id,
-                            target=target.data.station_id,
-                            weight='weight'
-                        )
-                        distance = nx.path_weight(self.G, path, 'weight')
-
-                        if distance < min_distance:
-                            min_distance = distance
-                            best_path = path
-                        elif distance == min_distance:
-                            if random.choice([True, False]):
-                                best_path = path
-
-                    except nx.NetworkXNoPath:
-                        continue
+                best_path = best_paths_for_shapes.get(p_model.target_shape)
 
                 if best_path:
                     p_model.travel_list = best_path[1:]
@@ -420,79 +445,56 @@ class MiniMetroEnv(gym.Env):
         current_line = next((line for line in self.lines if line.data.color == selected_color), None)
 
         if current_line is None:
-            # Przypadek 1: Tworzenie nowej linii (Typ 0)
-            # Możliwe tylko, jeśli mamy co najmniej 2 stacje
             if num_current_stations >= 2:
-                manage_line_type_mask[0] = 1  # Włącz tworzenie
+                manage_line_type_mask[0] = 1
                 for i in range(num_current_stations):
                     for j in range(num_current_stations):
                         if i != j:
                             manage_line_mask[0, i, j] = 1
         else:
-            # Przypadek 2: Zarządzanie istniejącą linią
-
             # Akcja: Usuń linię (Typ 1)
             # Zawsze można usunąć istniejącą linię.
             manage_line_type_mask[1] = 1
-            # UWAGA: Twój model_trainer.py poprawnie pomija próbkowanie p1/p2 dla typu 1,
-            # więc NIE POTRZEBUJEMY "sztucznej" maski (np. manage_line_mask[1, 0, 0] = 1).
-            # To jest poprawne zachowanie.
-
-            # Akcja: Rozszerz linię (Typ 0)
-            # Musimy znaleźć jakiekolwiek możliwe rozszerzenia.
             possible_extensions_found = False
 
             if len(current_line.stations) == 1:
-                # Jeśli linia ma 1 stację, można ją rozszerzyć do dowolnej innej stacji
                 if num_current_stations > 1:
                     try:
                         ep_idx = self.stations.index(current_line.stations[0])
                         for j in range(num_current_stations):
-                            if j != ep_idx:  # Nie łącz stacji sama ze sobą
+                            if j != ep_idx:
                                 manage_line_mask[0, ep_idx, j] = 1
                                 possible_extensions_found = True
                     except ValueError:
-                        pass  # Stacja z linii nie istnieje już w self.stations (błąd integralności?)
+                        pass
 
             elif len(current_line.stations) > 1:
-                # Jeśli linia ma >1 stacji, można ją rozszerzyć tylko z końców
                 endpoints = [current_line.stations[0], current_line.stations[-1]]
                 endpoint_indices = [self.stations.index(s) for s in endpoints if s in self.stations]
 
                 for ep_idx in endpoint_indices:
                     for j in range(num_current_stations):
-                        # Można rozszerzyć do stacji, której jeszcze nie ma na linii
                         if self.stations[j] not in current_line.stations:
                             manage_line_mask[0, ep_idx, j] = 1
                             possible_extensions_found = True
 
-            # (Jeśli len(current_line.stations) == 0, possible_extensions_found zostaje False)
-
-            # KLUCZOWA POPRAWKA (naprawia błąd NaN):
-            # Włącz akcję typu "rozszerz" (Typ 0) TYLKO WTEDY,
-            # gdy znaleźliśmy dla niej jakiekolwiek ważne akcje p1/p2.
             if possible_extensions_found:
                 manage_line_type_mask[0] = 1
 
         # --- Logika dla maski "deploy_train" (Akcja 2) ---
         if self.available_trains > 0:
             for i, station in enumerate(self.stations):
-                # Pociąg można dodać na stacji, która należy do JAKIEJKOLWIEK linii
                 if any(station.data.station_id in line.data.station_ids for line in self.lines):
                     deploy_train_mask[i] = 1
 
         # --- Finalizacja maski wysokiego poziomu ---
 
-        # Włącz "manage_line", jeśli jakakolwiek pod-akcja (tworzenie, usuwanie, rozszerzanie) jest możliwa
         if np.any(manage_line_type_mask):
             high_level_mask[1] = 1
 
-        # Włącz "deploy_train", jeśli jakakolwiek pod-akcja (stacja docelowa) jest możliwa
-        # (Warunek `available_trains > 0` jest już zawarty w logice deploy_train_mask)
         if np.any(deploy_train_mask):
             high_level_mask[2] = 1
 
-        # --- Zwrócenie słownika z kompletem masek ---
         return {
             "high_level": high_level_mask,
             "manage_line": manage_line_mask,
@@ -665,7 +667,11 @@ class MiniMetroEnv(gym.Env):
 
         self.deploy_train_mode = False
 
-        return self._get_obs(), self._get_info()
+        obs = self._get_obs()
+        info = self._get_info()
+        info["action_masks"] = obs["action_masks"]
+
+        return obs, info
 
     def step(self, action):
         reward = 0.0
@@ -679,9 +685,12 @@ class MiniMetroEnv(gym.Env):
             reward += self._update_trains()
             self._update_station_spawning()
             reward += self._update_week_timer()
-            # Usunięto stąd 'self.all_passengers_plan_update()'
 
-        return self._get_obs(), reward, self.game_over, False, self._get_info()
+        obs = self._get_obs()
+        info = self._get_info()
+        info["action_masks"] = obs["action_masks"]
+
+        return obs, reward, self.game_over, False, info
 
     def render(self):
         if self.screen is None and self.render_mode == "human": self._initialize_pygame()

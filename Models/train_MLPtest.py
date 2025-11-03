@@ -1,42 +1,101 @@
-import pytorch_lightning as pl
+import torch
+import gymnasium as gym
 from gymnasium_env_metro.environment import MiniMetroEnv
-from model_trainer import PPOTrainer
-
-# Krok 1: Importujemy nasz nowy, prosty model MLPModel
+from model_trainer import A2CTrainer
 from model.MLPtest import MLPModel
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+
+from pathlib import Path
+import time
+
+# --- Funkcja pomocnicza do tworzenia środowisk ---
+def make_env():
+    def _init():
+        env = MiniMetroEnv()
+        return env
+
+    return _init
+# ------------------------------------------------
 
 if __name__ == "__main__":
 
-    print("--- URUCHAMIANIE TESTU Z PROSTYM MODELEM MLP ---")
+    print("--- URUCHAMIANIE TESTU Z RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    env = MiniMetroEnv()
+    EXPERIMENT_NAME = "A2C_MLP_test_final"
+    # -------------------------------------------------
 
-    # Pobieramy wymiary ze środowiska (tak jak wcześniej)
-    num_node_features = env.observation_space["node_features"].shape[1]
-    num_stations = env.observation_space["node_features"].shape[0]
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"--- Używane urządzenie: {device} ---")
 
-    # Krok 2: Tworzymy instancję MLPModel (zamiast GNNModel)
-    # Zauważ, że przekazujemy te same parametry - model jest kompatybilny
+    NUM_ENVS = 8
+    print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
+
+    temp_env = MiniMetroEnv()
+    num_node_features = temp_env.observation_space["node_features"].shape[1]
+    num_stations = temp_env.observation_space["node_features"].shape[0]
+    temp_env.close()
+
+    vec_env = gym.vector.AsyncVectorEnv(
+        [make_env() for _ in range(NUM_ENVS)]
+    )
+
     model_to_train = MLPModel(
         num_node_features=num_node_features,
         hidden_dim=128,
         num_stations=num_stations
     )
 
-    # Krok 3: Przekazujemy model testowy do tego samego, starego PPOTrainer
-    # PPOTrainer jest uniwersalny i nie wie, czy w środku jest GNN czy MLP
-    ppo_system = PPOTrainer(model=model_to_train, env=env)
-
-    trainer = pl.Trainer(
-        max_epochs=10000,
-        accelerator="auto",
-        logger=pl.loggers.TensorBoardLogger("logs/"),
-        # Użyj fast_dev_run=True, aby szybko sprawdzić, czy działa 1 cykl
-        # fast_dev_run=True
+    a2c_system = A2CTrainer(
+        model=model_to_train,
+        vec_env=vec_env,
+        device=device,
+        num_envs=NUM_ENVS,
+        lr=3e-4,
+        gamma=0.99,
+        gae_lambda=0.95,
+        ppo_epochs=20,
+        num_steps=128,
+        batch_size=128,
+        entropy_coef=0.01
     )
 
-    print("Rozpoczynanie treningu z modelem MLP...")
-    trainer.fit(ppo_system)
+    a2c_system.to(device)
+    optimizer = a2c_system.configure_optimizers()
+    a2c_system.model.train()
+
+    MAX_EPOCHS = 10000
+
+    # --- ZMIANA TUTAJ: Tworzymy UNIKALNĄ ścieżkę logów ---
+    SCRIPT_DIR = Path(__file__).parent
+    PROJECT_ROOT = SCRIPT_DIR.parent
+
+    current_time = time.strftime("%Y-%m-%d_%H-%M-%S")
+    RUN_NAME = f"{EXPERIMENT_NAME}_{current_time}"
+
+    LOG_PATH = PROJECT_ROOT / "logs" / RUN_NAME
+
+    writer = SummaryWriter(LOG_PATH)
+    print(f"Uruchomiono logowanie TensorBoard. Logi w: {LOG_PATH}")
+    print(f"Użyj: tensorboard --logdir logs")
+
+    print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
+
+    for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+
+        metrics = a2c_system.training_step(optimizer)
+
+        # 1. Zapisz metryki do pliku TensorBoard
+        for key, value in metrics.items():
+            writer.add_scalar(f"train/{key}", value, epoch)
+
+        # 2. Zaktualizuj opis paska postępu tqdm
+        pbar.set_description(
+            f"Epoch {epoch} | Avg Score: {metrics['avg_episode_score']:.2f} | "
+            f"Avg Week: {metrics['avg_episode_week']:.2f} | "
+            f"Loss: {metrics['loss']:.4f}"
+        )
 
     print("Trening zakończony.")
-    env.close()
+    writer.close()
+    vec_env.close()

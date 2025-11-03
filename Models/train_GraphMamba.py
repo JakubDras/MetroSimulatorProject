@@ -2,7 +2,7 @@ import os
 import pytorch_lightning as pl
 from gymnasium_env_metro.environment import MiniMetroEnv
 import gymnasium_env_metro.config as config
-from model_trainer import PPOTrainer
+from model_trainer import A2CTrainer
 
 from model.GraphMamba import GraphMamba
 
@@ -21,7 +21,7 @@ if __name__ == "__main__":
         num_line_colors=num_line_colors
     )
 
-    ppo_system = PPOTrainer(model=model_to_train, env=env, lr=3e-4)
+    ppo_system = A2CTrainer(model=model_to_train, env=env, lr=3e-4)
 
     trainer = pl.Trainer(
         max_epochs=10000,
