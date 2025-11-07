@@ -88,6 +88,11 @@ if __name__ == "__main__":
 
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
+    # --- [LOGIKA MROŻENIA] Inicjalizacja zmiennych ---
+    FREEZE_EPOCH = 1000  # Epoka, w której mrozimy enkodera
+    is_frozen = False
+    # ---
+
     # --- [EARLY STOPPING] Inicjalizacja zmiennych ---
     best_avg_score = -float('inf')
     patience_counter = 0
@@ -96,6 +101,20 @@ if __name__ == "__main__":
     # --- Koniec inicjalizacji ---
 
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+
+        # --- [LOGIKA MROŻENIA] Aktywacja mrożenia ---
+        if not is_frozen and epoch >= FREEZE_EPOCH:
+            # Wywołujemy nową funkcję z GraphMambaModel
+            a2c_system.model.freeze_encoder_layers()
+
+            # Kluczowy krok: Tworzymy nowy optymalizator, który "widzi" tylko aktywne parametry
+            print("\n--- 🧊 Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr  # Używamy tego samego lr, co wcześniej
+            )
+            is_frozen = True
+        # --- Koniec logiki mrożenia ---
 
         metrics = a2c_system.training_step(optimizer)
 
@@ -130,7 +149,7 @@ if __name__ == "__main__":
                 print(f"Model nie poprawił wyniku {best_avg_score:.2f} przez {PATIENCE_EPOCHS} epok.")
                 print(f"Zatrzymywanie treningu w epoce {epoch}.")
                 break
-                # --- Koniec logiki Early Stopping ---
+        # --- Koniec logiki Early Stopping ---
 
     print("Trening zakończony.")
     writer.close()

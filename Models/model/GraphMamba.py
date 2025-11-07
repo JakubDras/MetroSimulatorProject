@@ -1,5 +1,5 @@
 # plik: model/GraphMamba.py
-# WERSJA POPRAWIONA DLA ZRÓWNOLEGLONYCH ŚRODOWISK (BATCHING)
+# WERSJA Z DODANĄ PROJEKCJĄ WEJŚCIOWĄ I MROŻENIEM
 
 import torch
 import torch.nn as nn
@@ -12,28 +12,30 @@ import gymnasium_env_metro.config as config
 class GraphMambaModel(nn.Module):
     """
     Definicja architektury sieci opartej na GCN + Mamba.
-    Obsługuje teraz paczki (batche) grafów ze zrównoleglonych środowisk.
+    (Poprawiona o spójną warstwę initial_projection)
     """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
-        # Pobieramy num_line_colors z configu, tak jak w innych modelach
         num_line_colors = len(config.LINE_COLORS)
 
-        # Warstwy GCN
-        self.gnn_conv1 = GCNConv(num_node_features, hidden_dim)
+        # --- Warstwy enkodera (do mrożenia) ---
+
+        # [NOWA ZMIANA] Dodajemy warstwę projekcji, aby ujednolicić architekturę
+        self.initial_projection = nn.Linear(num_node_features, hidden_dim)
+
+        # [NOWA ZMIANA] gnn_conv1 operuje już na hidden_dim
+        self.gnn_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.gnn_conv2 = GCNConv(hidden_dim, hidden_dim)
 
-        # Mamba
         self.mamba = Mamba(
             d_model=hidden_dim,
-            d_state=16,  # Możesz chcieć to dostroić
+            d_state=16,
             d_conv=4,
             expand=2,
         )
-
-        # Warstwa normalizująca po połączeniu rezydualnym
         self.norm = nn.LayerNorm(hidden_dim)
+        # --- Koniec warstw enkodera ---
 
         # Głowice Aktora i Krytyka (bez zmian)
         self.critic_head = nn.Linear(hidden_dim, 1)
@@ -46,27 +48,47 @@ class GraphMambaModel(nn.Module):
 
     def encode(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """
-        Twoja autorska funkcja enkodera (GCN -> Mamba -> Residual)
-        Ta funkcja jest teraz poprawnie wywoływana przez batched 'forward'.
-        'node_features' będzie miało kształt [N_total, F]
+        Poprawiona funkcja enkodera (Projection -> GCN -> Mamba -> Residual)
         """
-        h_gnn = self.gnn_conv1(node_features, edge_index).relu()
+        # [NOWA ZMIANA] Krok 1: Projekcja cech węzłów
+        h = self.initial_projection(node_features).relu()
+
+        # [NOWA ZMIANA] Krok 2: Warstwy GCN (operują już na hidden_dim)
+        # Zachowujemy h jako bazę do połączenia rezydualnego
+        h_gnn = self.gnn_conv1(h, edge_index).relu()
         h_gnn = self.gnn_conv2(h_gnn, edge_index).relu()
 
-        # Mamba oczekuje (batch, seq_len, d_model)
-        # Traktujemy wszystkie węzły w paczce jako jedną, długą sekwencję
-        seq_in = h_gnn.unsqueeze(0)  # Kształt: [1, N_total, hidden_dim]
+        # Krok 3: Mamba
+        seq_in = h_gnn.unsqueeze(0)
         seq_out = self.mamba(seq_in)
-        h_mamba = seq_out.squeeze(0)  # Kształt: [N_total, hidden_dim]
+        h_mamba = seq_out.squeeze(0)
 
-        # Połączenie rezydualne i normalizacja
+        # Krok 4: Połączenie rezydualne i normalizacja
+        # Używamy h_gnn jako wejścia do Mamby, ale h (z projekcji) jako bazy rezydualnej?
+        # Lepsze będzie: (Projection+GNN) + Mamba
         h_final = self.norm(h_gnn + h_mamba)
         return h_final
 
+    def freeze_encoder_layers(self):
+        """
+        Wyłącza obliczanie gradientów dla wszystkich warstw enkodera.
+        """
+        print("--- 🧊 MROŻENIE WARSTW ENKODERA (PROJECTION + GCN + MAMBA) ---")
+        # [NOWA ZMIANA] Dodajemy initial_projection do mrożenia
+        for param in self.initial_projection.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv1.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv2.parameters():
+            param.requires_grad = False
+        for param in self.mamba.parameters():
+            param.requires_grad = False
+        for param in self.norm.parameters():
+            param.requires_grad = False
+
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
         """
-        NOWA METODA FORWARD (skopiowana z GNNModel/GraphTransformer)
-        Poprawnie obsługuje paczkę (batch) obserwacji.
+        NOWA METODA FORWARD (bez zmian, w pełni kompatybilna)
         """
 
         # 1. Pobieramy tensory z obserwacji.
@@ -86,7 +108,7 @@ class GraphMambaModel(nn.Module):
         batch_vector = []
         current_node_offset = 0
 
-        # 2. Tworzymy "super-graf" (batching grafów)
+        # 2. Tworzymy "super-graf"
         for i in range(batch_size):
             num_nodes = num_nodes_batch[i].item()
             num_edges = num_edges_batch[i].item()
@@ -104,7 +126,7 @@ class GraphMambaModel(nn.Module):
 
             current_node_offset += num_nodes
 
-        # 3. Sprawdzamy, czy w ogóle mamy jakieś węzły (możliwy pusty batch)
+        # 3. Sprawdzamy pusty batch
         if current_node_offset == 0:
             print("Ostrzeżenie: Pusty batch w GraphMambaModel.forward")
             output_dim = self.gnn_conv2.out_channels
@@ -112,15 +134,15 @@ class GraphMambaModel(nn.Module):
 
         else:
             # 4. Łączymy w jeden duży graf
-            h_nodes = torch.cat(all_valid_nodes, dim=0)  # Kształt [N_total, F]
-            h_batch = torch.cat(batch_vector, dim=0)  # Kształt [N_total]
+            h_nodes = torch.cat(all_valid_nodes, dim=0)
+            h_batch = torch.cat(batch_vector, dim=0)
 
             if all_valid_edges:
-                h_edges = torch.cat(all_valid_edges, dim=1)  # Kształt [2, E_total]
+                h_edges = torch.cat(all_valid_edges, dim=1)
             else:
                 h_edges = torch.empty((2, 0), dtype=torch.long, device=device)
 
-            # 5. Uruchamiamy GNN (tutaj wywoła się Twój nowy `encode`)
+            # 5. Uruchamiamy enkoder
             node_embeddings = self.encode(h_nodes, h_edges)
 
             # 6. Agregujemy (pool) do poziomu grafu
@@ -133,7 +155,7 @@ class GraphMambaModel(nn.Module):
                 full_graph_embedding[torch.unique(h_batch)] = graph_embedding
                 graph_embedding = full_graph_embedding
 
-        # 8. Głowice decyzyjne (bez zmian)
+        # 8. Głowice decyzyjne
         value = self.critic_head(graph_embedding)
         logits = {
             "high_level": self.high_level_head(graph_embedding),

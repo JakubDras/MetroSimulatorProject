@@ -1,5 +1,5 @@
 # plik: model/GNNencoder.py
-# WERSJA POPRAWIONA DLA ZRÓWNOLEGLONYCH ŚRODOWISK (BATCHING)
+# WERSJA Z FUNKCJĄ MROŻENIA
 
 import torch
 import torch.nn as nn
@@ -19,11 +19,12 @@ class GNNModel(nn.Module):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
 
+        # Te warstwy będziemy mrozić
         self.initial_projection = nn.Linear(num_node_features, hidden_dim)
         self.encoder_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.encoder_conv2 = GCNConv(hidden_dim, hidden_dim)
 
-        # Głowice Aktora i Krytyka
+        # Te warstwy pozostaną aktywne (do trenowania)
         self.critic_head = nn.Linear(hidden_dim, 1)
         self.high_level_head = nn.Linear(hidden_dim, 4)
         self.manage_line_type_head = nn.Linear(hidden_dim, 3)
@@ -43,27 +44,33 @@ class GNNModel(nn.Module):
             h = self.encoder_conv2(h, edge_index).relu()
         return h
 
+    # --- [NOWA FUNKCJA] ---
+    def freeze_encoder_layers(self):
+        """
+        Wyłącza obliczanie gradientów dla warstw enkodera GNN.
+        """
+        print("--- 🧊 MROŻENIE WARSTW ENKODERA GNN ---")
+        for param in self.initial_projection.parameters():
+            param.requires_grad = False
+        for param in self.encoder_conv1.parameters():
+            param.requires_grad = False
+        for param in self.encoder_conv2.parameters():
+            param.requires_grad = False
+    # --- KONIEC NOWEJ FUNKCJI ---
+
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
         """
-        NOWA METODA FORWARD (bardziej odporna na błędy):
-        Poprawnie obsługuje paczkę (batch) obserwacji.
-        Tworzy jeden wielki "super-graf" (sparse batch) do przetworzenia przez GNN.
+        NOWA METODA FORWARD (bez zmian)
         """
-
+        # ... (cała metoda forward bez zmian) ...
         # 1. Pobieramy tensory z obserwacji.
-        # Niezależnie od tego, czy pochodzą z env.step() czy z bufora, konwertujemy je na tensory na odpowiednim urządzeniu.
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
-
-        # num_nodes i num_edges mogą mieć kształt [batch_size] lub [batch_size, 1]. Ujednolicamy to.
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
         num_edges_batch = torch.as_tensor(obs["num_edges"], dtype=torch.long, device=device).flatten()
-
-        # Pobieramy cechy globalne, upewniając się, że są 2D [batch_size, num_features]
         global_features_batch = torch.as_tensor(obs["global_features"], dtype=torch.float32, device=device)
         if global_features_batch.dim() == 1:
-            global_features_batch = global_features_batch.unsqueeze(
-                0)  # Poprawka dla pojedynczej obserwacji (np. przy 'evaluate')
+            global_features_batch = global_features_batch.unsqueeze(0)
 
         batch_size = node_features_batch.shape[0]
 
@@ -74,45 +81,35 @@ class GNNModel(nn.Module):
 
         # 2. Tworzymy "super-graf" (batching grafów)
         for i in range(batch_size):
-            # Używamy .item(), aby dostać pythonowe liczby całkowite do indeksowania
             num_nodes = num_nodes_batch[i].item()
             num_edges = num_edges_batch[i].item()
 
-            # Jeśli nie ma węzłów, pomijamy (to ważne!)
             if num_nodes == 0:
                 continue
 
-            # Tniemy, aby uzyskać tylko aktywne węzły
             valid_nodes = node_features_batch[i, :num_nodes]
             all_valid_nodes.append(valid_nodes)
-
-            # Tworzymy wektor batcha dla global_mean_pool
             batch_vector.append(torch.full((num_nodes,), fill_value=i, device=device, dtype=torch.long))
 
             if num_edges > 0:
-                # Tniemy, aby uzyskać tylko aktywne krawędzie
                 valid_edges = edge_index_batch[i, :, :num_edges]
-                # Przesuwamy indeksy krawędzi o offset
                 all_valid_edges.append(valid_edges + current_node_offset)
 
             current_node_offset += num_nodes
 
         # 3. Sprawdzamy, czy w ogóle mamy jakieś węzły (możliwy pusty batch)
         if current_node_offset == 0:
-            # Nie ma żadnych węzłów w całej paczce, zwracamy zerowe tensory
-            # To jest przypadek brzegowy, ale ważny do obsłużenia
             print("Ostrzeżenie: Pusty batch w GNNModel.forward")
             graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
 
         else:
             # 4. Łączymy w jeden duży graf
-            h_nodes = torch.cat(all_valid_nodes, dim=0)  # Kształt [N_total, F]
-            h_batch = torch.cat(batch_vector, dim=0)  # Kształt [N_total]
+            h_nodes = torch.cat(all_valid_nodes, dim=0)
+            h_batch = torch.cat(batch_vector, dim=0)
 
-            if all_valid_edges:  # Sprawdzamy, czy lista nie jest pusta
-                h_edges = torch.cat(all_valid_edges, dim=1)  # Kształt [2, E_total]
+            if all_valid_edges:
+                h_edges = torch.cat(all_valid_edges, dim=1)
             else:
-                # Nie ma żadnych krawędzi w całej paczce
                 h_edges = torch.empty((2, 0), dtype=torch.long, device=device)
 
             # 5. Uruchamiamy GNN
@@ -121,8 +118,6 @@ class GNNModel(nn.Module):
             # 6. Agregujemy (pool) do poziomu grafu
             graph_embedding = global_mean_pool(node_embeddings, h_batch)
 
-            # Upewniamy się, że mamy wynik dla każdego elementu w batchu
-            # (jeśli jakiś graf miał 0 węzłów, global_mean_pool da 0, ale może zmienić rozmiar)
             if graph_embedding.shape[0] < batch_size:
                 full_graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
                 full_graph_embedding[torch.unique(h_batch)] = graph_embedding

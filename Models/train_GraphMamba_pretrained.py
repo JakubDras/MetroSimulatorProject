@@ -1,42 +1,162 @@
-import os
-import pytorch_lightning as pl
+# plik: train_GraphMambaHF.py
+
+import torch
+import gymnasium as gym
 from gymnasium_env_metro.environment import MiniMetroEnv
 from model_trainer import A2CTrainer
+from tqdm import tqdm
+from torch.utils.tensorboard import SummaryWriter
+from pathlib import Path
+import time
 
+# [ZMIANA] Poprawiony import, aby pasował do nazwy pliku modelu
 from model.GraphMamba_pretrained import GraphMambaHFModel
+
+
+# --- Funkcja pomocnicza do tworzenia środowisk ---
+def make_env():
+    def _init():
+        env = MiniMetroEnv()
+        return env
+
+    return _init
+
+
+# ------------------------------------------------
 
 if __name__ == "__main__":
 
-    env = MiniMetroEnv()
-    num_node_features = env.observation_space["node_features"].shape[1]
-    num_stations = env.observation_space["node_features"].shape[0]
+    print("--- URUCHAMIANIE TESTU Z PRETRAINED GRAPH MAMBA (HF) I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    MAMBA_MODEL_NAME = "state-spaces/mamba-130m-slimpj"
+    # --- Nazwa eksperymentu ---
+    EXPERIMENT_NAME = "A2C_GraphMambaHF_test1"
+    # -------------------------------------------------
 
-    #Fixed number don't touch
-    HIDDEN_DIM = 768
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"--- Używane urządzenie: {device} ---")
 
-    print(f"Tworzenie modelu GraphMambaHF z użyciem pre-trenowanego '{MAMBA_MODEL_NAME}'...")
-    print("UWAGA: Przy pierwszym uruchomieniu nastąpi pobieranie modelu, co może potrwać kilka minut.")
+    NUM_ENVS = 7
+    print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
+
+    temp_env = MiniMetroEnv()
+    num_node_features = temp_env.observation_space["node_features"].shape[1]
+    num_stations = temp_env.observation_space["node_features"].shape[0]
+    temp_env.close()
+
+    vec_env = gym.vector.AsyncVectorEnv(
+        [make_env() for _ in range(NUM_ENVS)]
+    )
+
+    # --- Inicjalizacja modelu ---
+    # Model 'state-spaces/mamba-130m-slimpj' ma hidden_size = 768
+    MODEL_HIDDEN_DIM = 768
 
     model_to_train = GraphMambaHFModel(
         num_node_features=num_node_features,
-        hidden_dim=HIDDEN_DIM,
+        hidden_dim=MODEL_HIDDEN_DIM,
         num_stations=num_stations,
-        mamba_model_name=MAMBA_MODEL_NAME,
-        freeze_mamba=True
+        mamba_model_name="state-spaces/mamba-130m-slimpj",
+        freeze_mamba=True  # Mamba jest zamrożona od początku
+    )
+    print(f"--- Inicjalizacja modelu GraphMambaHF (hidden_dim={MODEL_HIDDEN_DIM}) ---")
+
+    a2c_system = A2CTrainer(
+        model=model_to_train,
+        vec_env=vec_env,
+        device=device,
+        num_envs=NUM_ENVS,
+        lr=3e-4,
+        gamma=0.99,
+        gae_lambda=0.95,
+        ppo_epochs=8,
+        num_steps=512,
+        batch_size=256,
+        entropy_coef=0.01
     )
 
-    ppo_system = A2CTrainer(model=model_to_train, env=env, lr=3e-4)
+    a2c_system.to(device)
+    optimizer = a2c_system.configure_optimizers()
+    a2c_system.model.train()
 
-    trainer = pl.Trainer(
-        max_epochs=10000,
-        accelerator="auto",
-        logger=pl.loggers.TensorBoardLogger("logs/", name="GraphMambaHF")
-    )
+    MAX_EPOCHS = 10000
 
-    print("Rozpoczynanie treningu z modelem GraphMambaHF...")
-    trainer.fit(ppo_system)
+    SCRIPT_DIR = Path(__file__).parent
+    PROJECT_ROOT = SCRIPT_DIR.parent
+    current_time = time.strftime("%Y-%m-%d_%H-%M-%S")
+    RUN_NAME = f"{EXPERIMENT_NAME}_{current_time}"
+    LOG_PATH = PROJECT_ROOT / "logs" / RUN_NAME
+    LOG_PATH.mkdir(parents=True, exist_ok=True)
+
+    writer = SummaryWriter(LOG_PATH)
+    print(f"Uruchomiono logowanie TensorBoard. Logi w: {LOG_PATH}")
+    print(f"Użyj: tensorboard --logdir logs")
+
+    print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
+
+    # --- [LOGIKA MROŻENIA] Inicjalizacja zmiennych ---
+    # Mamba jest już zamrożona. Tutaj mrozimy adapter GNN po 1000 epok.
+    FREEZE_EPOCH = 1000
+    is_frozen = False
+    # ---
+
+    # --- [EARLY STOPPING] Inicjalizacja zmiennych ---
+    best_avg_score = -float('inf')
+    patience_counter = 0
+    PATIENCE_EPOCHS = 500
+    EPISODES_FOR_AVG = 100
+    # --- Koniec inicjalizacji ---
+
+    for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+
+        # --- [LOGIKA MROŻENIA] Aktywacja mrożenia ---
+        if not is_frozen and epoch >= FREEZE_EPOCH:
+            # Wywołujemy nową funkcję z GraphMambaHFModel
+            a2c_system.model.freeze_encoder_layers()
+
+            # Kluczowy krok: Tworzymy nowy optymalizator, który "widzi" tylko aktywne parametry
+            print("\n--- 🧊 Mrożenie warstw adaptera GNN. Tworzenie nowego optymalizatora... ---")
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr
+            )
+            is_frozen = True
+        # --- Koniec logiki mrożenia ---
+
+        metrics = a2c_system.training_step(optimizer)
+
+        # 1. Zapisz metryki do pliku TensorBoard
+        for key, value in metrics.items():
+            writer.add_scalar(f"train/{key}", value, epoch)
+
+        # 2. Zaktualizuj opis paska postępu tqdm
+        pbar.set_description(
+            f"Epoch {epoch} | Avg Score: {metrics['avg_episode_score']:.2f} | "
+            f"Avg Week: {metrics['avg_episode_week']:.2f} | "
+            f"Loss: {metrics['loss']:.4f}"
+        )
+
+        # --- [EARLY STOPPING] Logika sprawdzająca ---
+        is_ready_to_check = metrics.get("episodes_in_window", 0) >= EPISODES_FOR_AVG
+
+        if is_ready_to_check:
+            current_score = metrics['avg_episode_score']
+
+            if current_score > best_avg_score:
+                best_avg_score = current_score
+                patience_counter = 0
+                print(f"\n✨ Nowy najlepszy wynik: {best_avg_score:.2f} w epoce {epoch}. Zapisywanie modelu...")
+                torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
+
+            else:
+                patience_counter += 1
+
+            if patience_counter >= PATIENCE_EPOCHS:
+                print(f"\n--- 🛑 EARLY STOPPING ---")
+                print(f"Model nie poprawił wyniku {best_avg_score:.2f} przez {PATIENCE_EPOCHS} epok.")
+                print(f"Zatrzymywanie treningu w epoce {epoch}.")
+                break
+        # --- Koniec logiki Early Stopping ---
 
     print("Trening zakończony.")
-    env.close()
+    writer.close()
+    vec_env.close()

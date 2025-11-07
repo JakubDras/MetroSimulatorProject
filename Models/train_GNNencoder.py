@@ -84,19 +84,33 @@ if __name__ == "__main__":
 
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
+    # --- [LOGIKA MROŻENIA] Inicjalizacja zmiennych ---
+    FREEZE_EPOCH = 1000  # Epoka, w której mrozimy enkodera
+    is_frozen = False
+    # ---
+
     # --- [EARLY STOPPING] Inicjalizacja zmiennych ---
     best_avg_score = -float('inf')
     patience_counter = 0
-
-    # Ilość epok bez poprawy wyniku, po których przerywamy trening.
-    # Możesz dostosować tę wartość.
     PATIENCE_EPOCHS = 500
-
-    # Ilość epizodów w okienku A2CTrainer (deque=100)
     EPISODES_FOR_AVG = 100
     # --- Koniec inicjalizacji ---
 
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+
+        # --- [LOGIKA MROŻENIA] Aktywacja mrożenia ---
+        if not is_frozen and epoch >= FREEZE_EPOCH:
+            # Wywołujemy nową funkcję z GNNModel
+            a2c_system.model.freeze_encoder_layers()
+
+            # Kluczowy krok: Tworzymy nowy optymalizator, który "widzi" tylko aktywne parametry
+            print("\n--- 🧊 Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr  # Używamy tego samego lr, co wcześniej
+            )
+            is_frozen = True
+        # --- Koniec logiki mrożenia ---
 
         metrics = a2c_system.training_step(optimizer)
 
@@ -112,32 +126,24 @@ if __name__ == "__main__":
         )
 
         # --- [EARLY STOPPING] Logika sprawdzająca ---
-
-        # Sprawdzamy, czy średnia jest już "miarodajna" (czy zapełniło się okienko 100 epizodów)
         is_ready_to_check = metrics.get("episodes_in_window", 0) >= EPISODES_FOR_AVG
 
         if is_ready_to_check:
             current_score = metrics['avg_episode_score']
 
             if current_score > best_avg_score:
-                # Mamy nowy rekord! Resetujemy "cierpliwość".
                 best_avg_score = current_score
                 patience_counter = 0
                 print(f"\n✨ Nowy najlepszy wynik: {best_avg_score:.2f} w epoce {epoch}. Zapisywanie modelu...")
-
-                # Zapisujemy model, który osiągnął najlepszy wynik
                 torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
-
             else:
-                # Nie ma poprawy, zwiększamy licznik cierpliwości
                 patience_counter += 1
 
             if patience_counter >= PATIENCE_EPOCHS:
-                # Osiągnęliśmy limit cierpliwości, przerywamy trening
                 print(f"\n--- 🛑 EARLY STOPPING ---")
                 print(f"Model nie poprawił wyniku {best_avg_score:.2f} przez {PATIENCE_EPOCHS} epok.")
                 print(f"Zatrzymywanie treningu w epoce {epoch}.")
-                break  # Zatrzymuje pętlę 'for epoch ...'
+                break
         # --- Koniec logiki Early Stopping ---
 
     print("Trening zakończony.")
