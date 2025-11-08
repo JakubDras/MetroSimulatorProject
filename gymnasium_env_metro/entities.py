@@ -135,13 +135,12 @@ class Train:
                 return station
         return None
 
-    def update(self,env):
+    def update(self, env):
         if not self.line or len(self.line.stations) < 2:
             return False
 
         current_index = self.find_station_index_by_id(self.data.current_station_id)
         target_index = self.find_station_index_by_id(self.data.target_station_id)
-
 
         if current_index == -1 or target_index == -1:
             print("Błąd: stacja aktualna lub docelowa nie istnieje na linii. Usuwam pociąg.")
@@ -204,10 +203,20 @@ class Train:
                 random.shuffle(boarding_list)
 
                 for p in boarding_list:
-                    if p.travel_list:
-                        if len(self.data.passengers) < self.capacity and self.line.has_station(p.travel_list[0]) and p.travel_list[0] == self.data.target_station_id:
-                            self.data.passengers.append(p)
+                    if p.travel_list and len(self.data.passengers) < self.capacity:
 
+                        should_board = False
+
+                        if self.line.data.is_loop:
+                            if self.line.has_station(p.travel_list[0]):
+                                should_board = True
+                        else:
+                            if self.line.has_station(p.travel_list[0]) and p.travel_list[
+                                0] == self.data.target_station_id:
+                                should_board = True
+
+                        if should_board:
+                            self.data.passengers.append(p)
                             if p in arrived_station.data.passengers:
                                 arrived_station.data.passengers.remove(p)
 

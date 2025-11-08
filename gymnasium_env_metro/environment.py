@@ -5,6 +5,7 @@ import numpy as np
 import random
 import networkx as nx
 from typing import List
+import math
 
 from . import config
 from .data_models import StationModel, LineModel, TrainModel, PassengerModel
@@ -53,7 +54,6 @@ class MiniMetroEnv(gym.Env):
         new_station = Station(station_model)
         self.stations.append(new_station)
         self.G.add_node(station_model.station_id, pos=station_model.pos)
-        #print(f"Dodano początkową stację: {new_station.data.shape} w ({first_x}, {first_y})")
 
         while len(self.stations) < initial_stations_count:
             neighbour_station = random.choice(self.stations)
@@ -80,7 +80,6 @@ class MiniMetroEnv(gym.Env):
                     new_station = Station(station_model)
                     self.stations.append(new_station)
                     self.G.add_node(station_model.station_id, pos=station_model.pos)
-                    #print(f"Dodano początkową stację: {new_station.data.shape} w ({x}, {y})")
                     spawned = True
 
                 attempts += 1
@@ -116,7 +115,7 @@ class MiniMetroEnv(gym.Env):
                 self.trains.append(Train(train_model, new_line))
                 self.available_trains -= 1
 
-                self.all_passengers_plan_update()  # <-- DODANO TUTAJ
+                self.all_passengers_plan_update()
                 return 0.5
             else:
                 success = False
@@ -131,10 +130,10 @@ class MiniMetroEnv(gym.Env):
                     self.G.add_edge(s1.data.station_id, s2.data.station_id, key=str(selected_color),
                                     color=selected_color, weight=distance)
 
-                    self.all_passengers_plan_update()  # <-- DODANO TUTAJ
+                    self.all_passengers_plan_update()
                     return 0.1
 
-        elif line_action_type == 1:  # Usuń linię
+        elif line_action_type == 1:
             if current_line:
                 station_objects_on_line = current_line.stations
                 color_key = str(current_line.data.color)
@@ -160,7 +159,7 @@ class MiniMetroEnv(gym.Env):
 
                 self.lines.remove(current_line)
 
-                self.all_passengers_plan_update()  # <-- DODANO TUTAJ
+                self.all_passengers_plan_update()
                 return 0.1
 
         return -0.05
@@ -202,9 +201,16 @@ class MiniMetroEnv(gym.Env):
         return -0.01
 
     def _update_passenger_spawning(self):
+
+        score_based_reduction = math.floor((self.score + len(self.stations)*1.5))
+
+        current_spawn_rate = config.BASE_PASSENGER_SPAWN_RATE - math.floor(score_based_reduction/config.SCORE_DIVISOR_FOR_REDUCTION)
+
+        current_spawn_rate = max(config.MIN_PASSENGER_SPAWN_RATE, current_spawn_rate)
+
         self.passenger_spawn_timer += 1
 
-        if self.passenger_spawn_timer >= config.PASSENGER_SPAWN_RATE_FRAMES:
+        if self.passenger_spawn_timer >= current_spawn_rate:
             self.passenger_spawn_timer = 0
             if not self.stations: return
             station = random.choice(self.stations)
@@ -271,14 +277,12 @@ class MiniMetroEnv(gym.Env):
 
                 self.all_passengers_plan_update()
 
-                #print(f"Nowa stacja ({shape}) pojawiła się w Tygodniu {self.week_number}.")
                 spawned = True
                 self.spawned_stations_this_week += 1
 
             attempts += 1
 
         if not spawned and len(self.stations) < config.MAX_STATIONS:
-            #print(f"Nie udało się dodać nowej stacji w Tygodniu {self.week_number} po {max_attempts} próbach.")
             pass
 
     def _update_week_timer(self) -> float:
@@ -435,9 +439,6 @@ class MiniMetroEnv(gym.Env):
         deploy_train_mask = np.zeros(config.MAX_STATIONS, dtype=np.int8)
         select_line_mask = np.ones(len(config.LINE_COLORS), dtype=np.int8)
 
-        # Maska wysokiego poziomu: [0: noop, 1: manage, 2: deploy, 3: select]
-        # Zaczynamy z włączonymi tylko akcjami, które są zawsze "możliwe" (nawet jeśli nic nie robią).
-        # Akcje [1] i [2] włączymy dynamicznie, jeśli będą dla nich dostępne pod-akcje.
         high_level_mask = np.array([1, 0, 0, 1], dtype=np.int8)
 
         # --- Logika dla maski "manage_line" (Akcja 1) ---
@@ -452,8 +453,6 @@ class MiniMetroEnv(gym.Env):
                         if i != j:
                             manage_line_mask[0, i, j] = 1
         else:
-            # Akcja: Usuń linię (Typ 1)
-            # Zawsze można usunąć istniejącą linię.
             manage_line_type_mask[1] = 1
             possible_extensions_found = False
 
