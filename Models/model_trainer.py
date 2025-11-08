@@ -64,24 +64,17 @@ class A2CTrainer(torch.nn.Module):
     def get_actions_and_values(self, obs_gpu: dict, masks_cpu: dict) -> tuple:
         value_batch, logits_batch = self(obs_gpu)
 
-        # --- POCZĄTEK OPTYMALIZACJI A ---
-        # 1. Przenieś WSZYSTKIE maski na GPU RAZ, jako całą paczkę (batch)
-        #    Używamy torch.bool dla wydajności masek.
         masks_gpu = {
             k: torch.as_tensor(v, dtype=torch.bool, device=self.device)
             for k, v in masks_cpu.items()
         }
-        # --- KONIEC OPTYMALIZACJI A ---
 
         all_hl_actions = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
         all_ll_params = torch.zeros((self.num_envs, 3), dtype=torch.long, device=self.device)
         all_log_probs = torch.zeros(self.num_envs, device=self.device)
         all_entropies = torch.zeros(self.num_envs, device=self.device)
 
-        # Ta pętla jest nadal szeregowa (ze względu na zależne próbkowanie),
-        # ale teraz nie wykonuje już kosztownych transferów CPU->GPU wewnątrz.
         for i in range(self.num_envs):
-            # 2. Używaj masek już przeniesionych na GPU
             hl_mask = masks_gpu["high_level"][i]
             hl_logits_masked = logits_batch["high_level"][i].masked_fill(~hl_mask, -float('inf'))
             hl_dist = Categorical(logits=hl_logits_masked)
@@ -95,7 +88,7 @@ class A2CTrainer(torch.nn.Module):
             action_item = hl_action.item()
 
             if action_item == 1:
-                type_mask = masks_gpu["manage_line_type"][i]  # <-- Używamy maski z GPU
+                type_mask = masks_gpu["manage_line_type"][i]
                 type_logits = logits_batch["manage_line_type"][i].masked_fill(~type_mask, -float('inf'))
                 type_dist = Categorical(logits=type_logits)
                 type_action = type_dist.sample()
@@ -105,9 +98,7 @@ class A2CTrainer(torch.nn.Module):
                 ll_params[0] = type_action
 
                 if type_action.item() == 0:
-                    # UWAGA: Ta logika nadal wymaga Optymalizacji B, aby być szybsza.
-                    # Na razie obliczamy ją w pętli, ale na tensorach z GPU.
-                    p1_mask = masks_gpu["manage_line"][i, 0].any(dim=1)  # dim=1 to odpowiednik axis=1
+                    p1_mask = masks_gpu["manage_line"][i, 0].any(dim=1)
                     p1_logits = logits_batch["manage_line_p1"][i].masked_fill(~p1_mask, -float('inf'))
                     p1_dist = Categorical(logits=p1_logits)
                     p1_action = p1_dist.sample()
@@ -116,7 +107,7 @@ class A2CTrainer(torch.nn.Module):
                     entropy += p1_dist.entropy()
                     ll_params[1] = p1_action
 
-                    p2_mask = masks_gpu["manage_line"][i, 0, p1_action.item()]  # <-- Używamy maski z GPU
+                    p2_mask = masks_gpu["manage_line"][i, 0, p1_action.item()]
                     p2_logits = logits_batch["manage_line_p2"][i].masked_fill(~p2_mask, -float('inf'))
                     p2_dist = Categorical(logits=p2_logits)
                     p2_action = p2_dist.sample()
@@ -126,7 +117,7 @@ class A2CTrainer(torch.nn.Module):
                     ll_params[2] = p2_action
 
             elif action_item == 2:
-                mask = masks_gpu["deploy_train"][i]  # <-- Używamy maski z GPU
+                mask = masks_gpu["deploy_train"][i]
                 logits = logits_batch["deploy_train"][i].masked_fill(~mask, -float('inf'))
                 dist = Categorical(logits=logits)
                 action = dist.sample()
@@ -136,7 +127,7 @@ class A2CTrainer(torch.nn.Module):
                 ll_params[1] = action
 
             elif action_item == 3:
-                mask = masks_gpu["select_line"][i]  # <-- Używamy maski z GPU
+                mask = masks_gpu["select_line"][i]
                 logits = logits_batch["select_line"][i].masked_fill(~mask, -float('inf'))
                 dist = Categorical(logits=logits)
                 action = dist.sample()
@@ -170,7 +161,6 @@ class A2CTrainer(torch.nn.Module):
         for k, v in self.current_masks_cpu.items():
             buf_masks[k] = np.zeros((self.num_steps, self.num_envs) + v.shape[1:], dtype=v.dtype)
 
-        # Główna pętla zbierania danych
         for step in range(self.num_steps):
             for k, v in self.current_obs_gpu.items():
                 buf_obs[k][step] = v

@@ -1,9 +1,5 @@
-# plik: model/GNNencoder.py
-# WERSJA Z FUNKCJĄ MROŻENIA
-
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
 
 import gymnasium_env_metro.config as config
@@ -19,12 +15,10 @@ class GNNModel(nn.Module):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
 
-        # Te warstwy będziemy mrozić
         self.initial_projection = nn.Linear(num_node_features, hidden_dim)
         self.encoder_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.encoder_conv2 = GCNConv(hidden_dim, hidden_dim)
 
-        # Te warstwy pozostaną aktywne (do trenowania)
         self.critic_head = nn.Linear(hidden_dim, 1)
         self.high_level_head = nn.Linear(hidden_dim, 4)
         self.manage_line_type_head = nn.Linear(hidden_dim, 3)
@@ -44,7 +38,6 @@ class GNNModel(nn.Module):
             h = self.encoder_conv2(h, edge_index).relu()
         return h
 
-    # --- [NOWA FUNKCJA] ---
     def freeze_encoder_layers(self):
         """
         Wyłącza obliczanie gradientów dla warstw enkodera GNN.
@@ -56,14 +49,11 @@ class GNNModel(nn.Module):
             param.requires_grad = False
         for param in self.encoder_conv2.parameters():
             param.requires_grad = False
-    # --- KONIEC NOWEJ FUNKCJI ---
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
         """
         NOWA METODA FORWARD (bez zmian)
         """
-        # ... (cała metoda forward bez zmian) ...
-        # 1. Pobieramy tensory z obserwacji.
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
@@ -79,7 +69,6 @@ class GNNModel(nn.Module):
         batch_vector = []
         current_node_offset = 0
 
-        # 2. Tworzymy "super-graf" (batching grafów)
         for i in range(batch_size):
             num_nodes = num_nodes_batch[i].item()
             num_edges = num_edges_batch[i].item()
@@ -97,13 +86,11 @@ class GNNModel(nn.Module):
 
             current_node_offset += num_nodes
 
-        # 3. Sprawdzamy, czy w ogóle mamy jakieś węzły (możliwy pusty batch)
         if current_node_offset == 0:
             print("Ostrzeżenie: Pusty batch w GNNModel.forward")
             graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
 
         else:
-            # 4. Łączymy w jeden duży graf
             h_nodes = torch.cat(all_valid_nodes, dim=0)
             h_batch = torch.cat(batch_vector, dim=0)
 
@@ -112,10 +99,8 @@ class GNNModel(nn.Module):
             else:
                 h_edges = torch.empty((2, 0), dtype=torch.long, device=device)
 
-            # 5. Uruchamiamy GNN
             node_embeddings = self.encode(h_nodes, h_edges)
 
-            # 6. Agregujemy (pool) do poziomu grafu
             graph_embedding = global_mean_pool(node_embeddings, h_batch)
 
             if graph_embedding.shape[0] < batch_size:
@@ -123,7 +108,6 @@ class GNNModel(nn.Module):
                 full_graph_embedding[torch.unique(h_batch)] = graph_embedding
                 graph_embedding = full_graph_embedding
 
-        # 7. Głowice decyzyjne
         value = self.critic_head(graph_embedding)
         logits = {
             "high_level": self.high_level_head(graph_embedding),

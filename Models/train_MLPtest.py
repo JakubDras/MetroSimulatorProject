@@ -23,7 +23,6 @@ if __name__ == "__main__":
     print("--- URUCHAMIANIE TESTU Z RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
     EXPERIMENT_NAME = "A2C_MLP_test_final"
-    # -------------------------------------------------
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
@@ -66,7 +65,6 @@ if __name__ == "__main__":
 
     MAX_EPOCHS = 10000
 
-    # --- ZMIANA TUTAJ: Tworzymy UNIKALNĄ ścieżkę logów ---
     SCRIPT_DIR = Path(__file__).parent
     PROJECT_ROOT = SCRIPT_DIR.parent
 
@@ -85,11 +83,9 @@ if __name__ == "__main__":
 
         metrics = a2c_system.training_step(optimizer)
 
-        # 1. Zapisz metryki do pliku TensorBoard
         for key, value in metrics.items():
             writer.add_scalar(f"train/{key}", value, epoch)
 
-        # 2. Zaktualizuj opis paska postępu tqdm
         pbar.set_description(
             f"Epoch {epoch} | Avg Score: {metrics['avg_episode_score']:.2f} | "
             f"Avg Week: {metrics['avg_episode_week']:.2f} | "

@@ -17,17 +17,13 @@ def make_env():
         return env
 
     return _init
-
-
 # ------------------------------------------------
 
 if __name__ == "__main__":
 
     print("--- URUCHAMIANIE TESTU Z GNN I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    # --- Nazwa eksperymentu ---
-    EXPERIMENT_NAME = "A2C_GNN_test1"
-    # -------------------------------------------------
+    EXPERIMENT_NAME = "A2C_GNN_Baseline"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
@@ -50,7 +46,6 @@ if __name__ == "__main__":
         num_stations=num_stations
     )
 
-    # Hiperparametry ustawione na "złoty środek"
     a2c_system = A2CTrainer(
         model=model_to_train,
         vec_env=vec_env,
@@ -76,7 +71,7 @@ if __name__ == "__main__":
     current_time = time.strftime("%Y-%m-%d_%H-%M-%S")
     RUN_NAME = f"{EXPERIMENT_NAME}_{current_time}"
     LOG_PATH = PROJECT_ROOT / "logs" / RUN_NAME
-    LOG_PATH.mkdir(parents=True, exist_ok=True)  # Upewniamy się, że folder logów istnieje
+    LOG_PATH.mkdir(parents=True, exist_ok=True)
 
     writer = SummaryWriter(LOG_PATH)
     print(f"Uruchomiono logowanie TensorBoard. Logi w: {LOG_PATH}")
@@ -84,48 +79,40 @@ if __name__ == "__main__":
 
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
-    # --- [LOGIKA MROŻENIA] Inicjalizacja zmiennych ---
-    FREEZE_EPOCH = 1000  # Epoka, w której mrozimy enkodera
+    # --- [LOGIKA MROŻENIA] ---
+    FREEZE_EPOCH = 1000
     is_frozen = False
     # ---
 
-    # --- [EARLY STOPPING] Inicjalizacja zmiennych ---
+    # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
     patience_counter = 0
     PATIENCE_EPOCHS = 500
     EPISODES_FOR_AVG = 100
-    # --- Koniec inicjalizacji ---
+    # ---
 
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
 
-        # --- [LOGIKA MROŻENIA] Aktywacja mrożenia ---
         if not is_frozen and epoch >= FREEZE_EPOCH:
-            # Wywołujemy nową funkcję z GNNModel
             a2c_system.model.freeze_encoder_layers()
-
-            # Kluczowy krok: Tworzymy nowy optymalizator, który "widzi" tylko aktywne parametry
             print("\n--- 🧊 Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
             optimizer = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
-                lr=a2c_system.lr  # Używamy tego samego lr, co wcześniej
+                lr=a2c_system.lr
             )
             is_frozen = True
-        # --- Koniec logiki mrożenia ---
 
         metrics = a2c_system.training_step(optimizer)
 
-        # 1. Zapisz metryki do pliku TensorBoard
         for key, value in metrics.items():
             writer.add_scalar(f"train/{key}", value, epoch)
 
-        # 2. Zaktualizuj opis paska postępu tqdm
         pbar.set_description(
             f"Epoch {epoch} | Avg Score: {metrics['avg_episode_score']:.2f} | "
             f"Avg Week: {metrics['avg_episode_week']:.2f} | "
             f"Loss: {metrics['loss']:.4f}"
         )
 
-        # --- [EARLY STOPPING] Logika sprawdzająca ---
         is_ready_to_check = metrics.get("episodes_in_window", 0) >= EPISODES_FOR_AVG
 
         if is_ready_to_check:
@@ -140,11 +127,10 @@ if __name__ == "__main__":
                 patience_counter += 1
 
             if patience_counter >= PATIENCE_EPOCHS:
-                print(f"\n--- 🛑 EARLY STOPPING ---")
+                print(f"\n---EARLY STOPPING---")
                 print(f"Model nie poprawił wyniku {best_avg_score:.2f} przez {PATIENCE_EPOCHS} epok.")
                 print(f"Zatrzymywanie treningu w epoce {epoch}.")
                 break
-        # --- Koniec logiki Early Stopping ---
 
     print("Trening zakończony.")
     writer.close()
