@@ -1,11 +1,11 @@
 import pygame
 import sys
 import numpy as np
-from gymnasium_env_metro.environment import MiniMetroEnv
+from gymnasium_env_metro.environment import MetroSymulatorEnv
 import gymnasium_env_metro.config as config
 
 class HumanPlayer:
-    def __init__(self, env: MiniMetroEnv):
+    def __init__(self, env: MetroSymulatorEnv):
         self.env = env
         self.first_station_clicked_idx = None
         self.deploy_train_mode = False
@@ -99,12 +99,12 @@ class HumanPlayer:
 
 
 if __name__ == "__main__":
-    env = MiniMetroEnv(render_mode="human")
+    env = MetroSymulatorEnv(render_mode="human")
     obs, info = env.reset()
 
     player = HumanPlayer(env)
 
-    print("--- MiniMetro Gym Environment: Tryb Gry ---")
+    print("--- Metro Symulator Gym Environment: Tryb Gry ---")
     print("Sterowanie:")
     print("  Lewy klik: Wybierz stację 1, potem stację 2, aby zbudować/przedłużyć linię")
     print("  Prawy klik: Usuń linię o aktualnie wybranym kolorze")

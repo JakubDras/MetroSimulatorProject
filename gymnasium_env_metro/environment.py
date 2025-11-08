@@ -12,7 +12,7 @@ from .data_models import StationModel, LineModel, TrainModel, PassengerModel
 from .entities import Station, Line, Train
 
 
-class MiniMetroEnv(gym.Env):
+class MetroSymulatorEnv(gym.Env):
     metadata = {"render_modes": ["human"]}
 
     #Metody Pomocnicze
@@ -20,7 +20,7 @@ class MiniMetroEnv(gym.Env):
         pygame.init()
         pygame.font.init()
         self.screen = pygame.display.set_mode((config.SCREEN_WIDTH, config.SCREEN_HEIGHT))
-        pygame.display.set_caption("Mini Metro")
+        pygame.display.set_caption("Metro Symulator")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.Font(None, 28)
         self.font_small = pygame.font.Font(None, 20)

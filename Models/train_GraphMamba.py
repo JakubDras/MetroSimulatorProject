@@ -1,6 +1,6 @@
 import torch
 import gymnasium as gym
-from gymnasium_env_metro.environment import MiniMetroEnv
+from gymnasium_env_metro.environment import MetroSymulatorEnv
 from model_trainer import A2CTrainer
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -13,7 +13,7 @@ from model.GraphMamba import GraphMambaModel
 # --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
-        env = MiniMetroEnv()
+        env = MetroSymulatorEnv()
         return env
 
     return _init
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     NUM_ENVS = 7
     print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
 
-    temp_env = MiniMetroEnv()
+    temp_env = MetroSymulatorEnv()
     num_node_features = temp_env.observation_space["node_features"].shape[1]
     num_stations = temp_env.observation_space["node_features"].shape[0]
     temp_env.close()
