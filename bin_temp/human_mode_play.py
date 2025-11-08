@@ -1,11 +1,11 @@
 import pygame
 import sys
 import numpy as np
-from gymnasium_env_metro.environment import MetroSymulatorEnv
+from gymnasium_env_metro.environment import MetroSimulatorEnv
 import gymnasium_env_metro.config as config
 
 class HumanPlayer:
-    def __init__(self, env: MetroSymulatorEnv):
+    def __init__(self, env: MetroSimulatorEnv):
         self.env = env
         self.first_station_clicked_idx = None
         self.deploy_train_mode = False
@@ -99,7 +99,7 @@ class HumanPlayer:
 
 
 if __name__ == "__main__":
-    env = MetroSymulatorEnv(render_mode="human")
+    env = MetroSimulatorEnv(render_mode="human")
     obs, info = env.reset()
 
     player = HumanPlayer(env)

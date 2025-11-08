@@ -1,6 +1,6 @@
 import torch
 import gymnasium as gym
-from gymnasium_env_metro.environment import MetroSymulatorEnv
+from gymnasium_env_metro.environment import MetroSimulatorEnv
 from model_trainer import A2CTrainer
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -13,7 +13,7 @@ from model.GraphMamba import GraphMambaModel
 # --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
-        env = MetroSymulatorEnv()
+        env = MetroSimulatorEnv()
         return env
 
     return _init
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     NUM_ENVS = 7
     print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
 
-    temp_env = MetroSymulatorEnv()
+    temp_env = MetroSimulatorEnv()
     num_node_features = temp_env.observation_space["node_features"].shape[1]
     num_stations = temp_env.observation_space["node_features"].shape[0]
     temp_env.close()
@@ -96,7 +96,7 @@ if __name__ == "__main__":
         if not is_frozen and epoch >= FREEZE_EPOCH:
             a2c_system.model.freeze_encoder_layers()
 
-            print("\n--- 🧊 Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
             optimizer = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
                 lr=a2c_system.lr

@@ -1,6 +1,6 @@
 import torch
 import gymnasium as gym
-from gymnasium_env_metro.environment import MetroSymulatorEnv
+from gymnasium_env_metro.environment import MetroSimulatorEnv
 from model_trainer import A2CTrainer
 from model.MLPtest import MLPModel
 from tqdm import tqdm
@@ -12,7 +12,7 @@ import time
 # --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
-        env = MetroSymulatorEnv()
+        env = MetroSimulatorEnv()
         return env
 
     return _init
@@ -30,7 +30,7 @@ if __name__ == "__main__":
     NUM_ENVS = 8
     print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
 
-    temp_env = MetroSymulatorEnv()
+    temp_env = MetroSimulatorEnv()
     num_node_features = temp_env.observation_space["node_features"].shape[1]
     num_stations = temp_env.observation_space["node_features"].shape[0]
     temp_env.close()
