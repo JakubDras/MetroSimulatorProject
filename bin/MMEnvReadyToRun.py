@@ -1,7 +1,7 @@
 import pygame
 import sys
 import numpy as np
-from MMEnvKuba import MiniMetroEnv
+from MiniMetroProject.bin.MMEnvKuba import MiniMetroEnv
 
 
 first_station_clicked_idx = None

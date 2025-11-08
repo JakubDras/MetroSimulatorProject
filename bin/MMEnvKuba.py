@@ -1045,9 +1045,3 @@ class MiniMetroEnv(gym.Env):
             pygame.display.quit()
             pygame.quit()
             self.screen = None
-
-
-
-
-
-
