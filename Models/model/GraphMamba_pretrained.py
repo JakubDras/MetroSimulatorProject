@@ -1,10 +1,11 @@
 # plik: model/GraphMambaHF.py
 # WERSJA Z PROJEKCJĄ WEJŚCIOWĄ I MROŻENIEM
+# (Poprawiona o MambaModel, aby uniknąć błędu ładowania głowicy LM)
 
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
-from transformers import MambaForCausalLM, MambaConfig
+from transformers import MambaModel, MambaConfig
 
 import gymnasium_env_metro.config as config
 
@@ -16,15 +17,20 @@ class GraphMambaHFModel(nn.Module):
     """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int,
-                 mamba_model_name: str = "state-spaces/mamba-130m-slimpj", freeze_mamba: bool = True):
+                 mamba_model_name: str = "state-spaces/mamba-130m", freeze_mamba: bool = True):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
 
-        # --- Logika ładowania Mamby (bez zmian) ---
+        # --- Logika ładowania Mamby (POPRAWIONA) ---
         mamba_config = MambaConfig.from_pretrained(mamba_model_name)
-        mamba_full_model = MambaForCausalLM.from_pretrained(mamba_model_name)
 
-        self.mamba_backbone = mamba_full_model.backbone
+        # [POPRAWKA 2] Ładujemy bezpośrednio MambaModel (sam "backbone")
+        # To pomija ładowanie głowicy 'lm_head', która powodowała błąd.
+        self.mamba_backbone = MambaModel.from_pretrained(mamba_model_name)
+
+        # [USUNIĘTE] Te linie nie są już potrzebne:
+        # mamba_full_model = MambaForCausalLM.from_pretrained(mamba_model_name)
+        # self.mamba_backbone = mamba_full_model.backbone
 
         mamba_hidden_size = mamba_config.hidden_size
         if hidden_dim != mamba_hidden_size:
@@ -39,10 +45,7 @@ class GraphMambaHFModel(nn.Module):
         # --- Koniec logiki Mamby ---
 
         # --- Warstwy enkodera GNN (Adapter) ---
-        # [NOWA ZMIANA] Dodajemy warstwę projekcji, aby ujednolicić architekturę
         self.initial_projection = nn.Linear(num_node_features, hidden_dim)
-
-        # [NOWA ZMIANA] gnn_conv1 operuje już na hidden_dim
         self.encoder_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.encoder_conv2 = GCNConv(hidden_dim, hidden_dim)
         self.norm = nn.LayerNorm(hidden_dim)
@@ -61,10 +64,10 @@ class GraphMambaHFModel(nn.Module):
         """
         Poprawiona funkcja enkodera (Projection -> GCN -> Mamba -> Residual)
         """
-        # [NOWA ZMIANA] Krok 1: Projekcja cech węzłów
+        # Krok 1: Projekcja cech węzłów
         h = self.initial_projection(node_features).relu()
 
-        # [NOWA ZMIANA] Krok 2: Warstwy GCN (operują już na hidden_dim)
+        # Krok 2: Warstwy GCN
         h_gnn = self.encoder_conv1(h, edge_index).relu()
         h_gnn = self.encoder_conv2(h_gnn, edge_index).relu()
 
@@ -77,7 +80,7 @@ class GraphMambaHFModel(nn.Module):
         h_final = self.norm(h_gnn + h_mamba)
         return h_final
 
-    # --- [NOWA FUNKCJA] ---
+    # --- [NOWA FUNKCJA] (bez zmian) ---
     def freeze_encoder_layers(self):
         """
         Wyłącza obliczanie gradientów dla warstw GNN (adaptera).

@@ -55,7 +55,7 @@ if __name__ == "__main__":
         num_node_features=num_node_features,
         hidden_dim=MODEL_HIDDEN_DIM,
         num_stations=num_stations,
-        mamba_model_name="state-spaces/mamba-130m-slimpj",
+        mamba_model_name="state-spaces/mamba-130m",
         freeze_mamba=True  # Mamba jest zamrożona od początku
     )
     print(f"--- Inicjalizacja modelu GraphMambaHF (hidden_dim={MODEL_HIDDEN_DIM}) ---")
