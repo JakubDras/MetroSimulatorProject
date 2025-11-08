@@ -58,9 +58,6 @@ class GNNModel(nn.Module):
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
         num_edges_batch = torch.as_tensor(obs["num_edges"], dtype=torch.long, device=device).flatten()
-        global_features_batch = torch.as_tensor(obs["global_features"], dtype=torch.float32, device=device)
-        if global_features_batch.dim() == 1:
-            global_features_batch = global_features_batch.unsqueeze(0)
 
         batch_size = node_features_batch.shape[0]
 
