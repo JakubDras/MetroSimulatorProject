@@ -45,7 +45,10 @@ class A2CTrainer(torch.nn.Module):
 
         init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
         self.current_obs_gpu = self._obs_to_gpu(init_obs_cpu)
-        self.current_masks_cpu = init_info_cpu["action_masks"]
+
+        # self.current_masks_cpu = init_info_cpu["action_masks"]
+        self.current_masks_cpu = init_obs_cpu["action_masks"]  # <--- POBIERZ Z OBSERWACJI
+
         self.current_dones = torch.zeros(self.num_envs, device=self.device)
 
     def _obs_to_gpu(self, obs_cpu: dict) -> dict:
@@ -182,15 +185,17 @@ class A2CTrainer(torch.nn.Module):
             self.current_obs_gpu = self._obs_to_gpu(next_obs_cpu)
             buf_rewards[step] = torch.as_tensor(rewards_cpu, dtype=torch.float32, device=self.device)
             self.current_dones = torch.as_tensor(dones_cpu, dtype=torch.float32, device=self.device)
-            self.current_masks_cpu = info["action_masks"]
+            # self.current_masks_cpu = info["action_masks"]
+            self.current_masks_cpu = next_obs_cpu["action_masks"]  # <--- POBIERZ Z OBSERWACJI
 
             if np.any(dones_cpu):
-                for i, done in enumerate(dones_cpu):
-                    if done:
-                        final_info = info["final_info"][i]
-
-                        self.episode_score_deque.append(final_info['score'])
-                        self.episode_week_deque.append(final_info['week_number'])
+                if "final_info" in info:
+                    for i, done in enumerate(dones_cpu):
+                        if done:
+                            final_info = info["final_info"][i]
+                            if final_info is not None:
+                                self.episode_score_deque.append(final_info['score'])
+                                self.episode_week_deque.append(final_info['week_number'])
         with torch.no_grad():
             next_value, _ = self(self.current_obs_gpu)
             next_value = next_value.flatten()

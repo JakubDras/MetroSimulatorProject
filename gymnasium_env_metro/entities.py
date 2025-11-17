@@ -190,7 +190,8 @@ class Train:
                     env.score += 1
                 elif len(p.travel_list) == 0:
                     arrived_station.data.passengers.append(p)
-                    env.travel_planner_for_new_passager(p)
+                    # env.travel_planner_for_new_passager(p)
+                    env.travel_planner_for_new_passenger(p)
                 elif p.travel_list[0] == arrived_station.data.station_id:
                     p.travel_list.pop(0)
                     arrived_station.data.passengers.append(p)

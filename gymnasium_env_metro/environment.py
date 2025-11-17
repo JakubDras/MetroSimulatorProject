@@ -202,7 +202,7 @@ class MetroSimulatorEnv(gym.Env):
 
     def _update_passenger_spawning(self):
 
-        score_based_reduction = math.floor((self.score + len(self.stations)*1.5))
+        score_based_reduction = math.floor((self.score + (len(self.stations)+self.week_number)*1.5))
 
         current_spawn_rate = config.BASE_PASSENGER_SPAWN_RATE - math.floor(score_based_reduction/config.SCORE_DIVISOR_FOR_REDUCTION)
 
@@ -555,7 +555,10 @@ class MetroSimulatorEnv(gym.Env):
                 "manage_line": spaces.Box(low=0, high=1, shape=(3, config.MAX_STATIONS, config.MAX_STATIONS),
                                           dtype=np.int8),
                 "deploy_train": spaces.Box(low=0, high=1, shape=(config.MAX_STATIONS,), dtype=np.int8),
-                "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8)
+                "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8),
+                # --- DODAJ TĘ LINIĘ ---
+                "manage_line_type": spaces.Box(low=0, high=1, shape=(3,), dtype=np.int8),
+                # -----------------------
             }),
 
             "num_edges": spaces.Box(low=0, high=MAX_EDGES, shape=(1,), dtype=np.int32
@@ -638,6 +641,8 @@ class MetroSimulatorEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
+        self.current_step = 0
+
         if self.screen is None and self.render_mode == "human":
             self._initialize_pygame()
 
@@ -668,12 +673,14 @@ class MetroSimulatorEnv(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
-        info["action_masks"] = obs["action_masks"]
 
         return obs, info
 
     def step(self, action):
-        reward = 0.0
+        self.current_step += 1
+
+        reward = -0.01
+
         if not self.game_over:
             high_level_action, params = action["high_level_action"], action["low_level_params"]
             action_handlers = {1: self._handle_manage_line, 2: self._handle_deploy_train, 3: self._handle_select_line}
@@ -687,9 +694,14 @@ class MetroSimulatorEnv(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
-        info["action_masks"] = obs["action_masks"]
 
-        return obs, reward, self.game_over, False, info
+        truncated = False
+        MAX_EPISODE_STEPS = 10000
+
+        if self.current_step >= MAX_EPISODE_STEPS:
+            truncated = True
+
+        return obs, reward, self.game_over, truncated, info
 
     def render(self):
         if self.screen is None and self.render_mode == "human": self._initialize_pygame()
