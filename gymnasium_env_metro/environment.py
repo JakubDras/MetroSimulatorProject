@@ -202,7 +202,7 @@ class MetroSimulatorEnv(gym.Env):
 
     def _update_passenger_spawning(self):
 
-        score_based_reduction = math.floor((self.score/5 + (len(self.stations)+self.week_number)))
+        score_based_reduction = math.floor((self.score/7 + (len(self.stations)+self.week_number)))
 
         current_spawn_rate = config.BASE_PASSENGER_SPAWN_RATE - math.floor(score_based_reduction/config.SCORE_DIVISOR_FOR_REDUCTION)
 
