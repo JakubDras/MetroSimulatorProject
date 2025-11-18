@@ -202,7 +202,7 @@ class MetroSimulatorEnv(gym.Env):
 
     def _update_passenger_spawning(self):
 
-        score_based_reduction = math.floor((self.score + (len(self.stations)+self.week_number)*1.5))
+        score_based_reduction = math.floor((self.score/5 + (len(self.stations)+self.week_number)))
 
         current_spawn_rate = config.BASE_PASSENGER_SPAWN_RATE - math.floor(score_based_reduction/config.SCORE_DIVISOR_FOR_REDUCTION)
 
@@ -227,33 +227,16 @@ class MetroSimulatorEnv(gym.Env):
                 station.data.is_overcrowded = True
                 self.game_over = True
 
-    # def _update_trains(self) -> float:
-    #     reward = 0
-    #     trains_to_remove = [t for t in self.trains if not t.update(self)]
-    #     if trains_to_remove:
-    #         self.trains = [t for t in self.trains if t not in trains_to_remove]
-    #         reward -= 0.5 * len(trains_to_remove)
-    #     return reward
-
     def _update_trains(self) -> float:
         reward_from_trains = 0.0
         trains_to_remove = []
 
         for t in self.trains:
-            # Teraz update zwraca dwie wartości
             continues, passengers_delivered = t.update(self)
 
-            # 🚀 TO JEST NAJWAŻNIEJSZA LINIA W CAŁYM TRENINGU 🚀
-            # Daj agentowi dużą nagrodę za każdego dowiezionego pasażera
+            agent_reward = passengers_delivered * 50.0
 
-            # --- POPRAWKA ---
-            # Oblicz nagrodę raz
-            passenger_reward = passengers_delivered * 50.0
-            # Dodaj ją do 'self.score' (dla logowania)
-            self.score += passenger_reward
-            # Dodaj ją do 'reward_from_trains' (dla agenta PPO)
-            reward_from_trains += passenger_reward
-            # ----------------
+            reward_from_trains += agent_reward
 
             if not continues:
                 trains_to_remove.append(t)
@@ -261,8 +244,6 @@ class MetroSimulatorEnv(gym.Env):
         self.trains = [t for t in self.trains if t not in trains_to_remove]
 
         if trains_to_remove:
-            # Ta kara jest tylko dla agenta, nie musi obniżać
-            # widocznego wyniku, więc 'self.score' zostaje bez zmian
             reward_from_trains -= 0.5 * len(trains_to_remove)
 
         return reward_from_trains
@@ -325,12 +306,8 @@ class MetroSimulatorEnv(gym.Env):
             self.available_trains += 1
             self.spawned_stations_this_week = 0
 
-            # --- POPRAWKA ---
-            # Dodaj nagrodę do 'self.score' (dla logowania)
-            self.score += 10.0
-            # ----------------
+            self.score += 1.0
 
-            # Zwróć nagrodę dla agenta PPO
             return 10.0
 
         return 0.0

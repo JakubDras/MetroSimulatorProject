@@ -43,17 +43,17 @@ class A2CTrainer(torch.nn.Module):
         self.episode_score_deque = collections.deque(maxlen=100)
         self.episode_week_deque = collections.deque(maxlen=100)
 
-        # --- DODAJ TE DWIE LINIE ---
         self.episode_truncated_deque = collections.deque(maxlen=100)
         self.episode_terminated_deque = collections.deque(maxlen=100)
-        # -----------------------------
+
+        self.episode_score_acc = np.zeros(num_envs, dtype=np.float32)
+        self.episode_week_acc = np.zeros(num_envs, dtype=np.float32)
 
 
         init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
         self.current_obs_gpu = self._obs_to_gpu(init_obs_cpu)
 
-        # self.current_masks_cpu = init_info_cpu["action_masks"]
-        self.current_masks_cpu = init_obs_cpu["action_masks"]  # <--- POBIERZ Z OBSERWACJI
+        self.current_masks_cpu = init_obs_cpu["action_masks"]
 
         self.current_dones = torch.zeros(self.num_envs, device=self.device)
 
@@ -186,43 +186,30 @@ class A2CTrainer(torch.nn.Module):
             buf_values[step] = values
             buf_entropies[step] = entropies
 
-            # --- POPRAWKA 1: Przechwyć 'terminated_cpu' i 'truncated_cpu' ---
             next_obs_cpu, rewards_cpu, terminated_cpu, truncated_cpu, info = self.vec_env.step(actions_list_cpu)
 
             self.current_obs_gpu = self._obs_to_gpu(next_obs_cpu)
             buf_rewards[step] = torch.as_tensor(rewards_cpu, dtype=torch.float32, device=self.device)
-
-            # --- POPRAWKA 2: 'current_dones' (dla GAE) to *tylko* 'terminated_cpu' ---
             self.current_dones = torch.as_tensor(terminated_cpu, dtype=torch.float32, device=self.device)
-
             self.current_masks_cpu = next_obs_cpu["action_masks"]
 
-            # --- POPRAWKA 3: (KLUCZOWA) Poprawna obsługa logowania z 'final_info' ---
-            # Sprawdzamy, czy cokolwiek się skończyło
+            self.episode_score_acc += rewards_cpu
+            self.episode_week_acc += (terminated_cpu | truncated_cpu)
+
             finished_cpu = np.logical_or(terminated_cpu, truncated_cpu)
 
             if np.any(finished_cpu):
-                # Dla AsyncVectorEnv, prawdziwe info jest w kluczu '_final_info'
-                if "_final_info" in info:
-                    for i, final_info in enumerate(info["_final_info"]):
-                        # Logujemy tylko jeśli ten agent FAKTYCZNIE skończył TERAZ
-                        # i jego 'final_info' nie jest puste
-                        if finished_cpu[i] and final_info is not None:
-                            self.episode_score_deque.append(final_info['score'])
-                            self.episode_week_deque.append(final_info['week_number'])
-                            self.episode_truncated_deque.append(final_info.get('ep_is_truncated', 0.0))
-                            self.episode_terminated_deque.append(final_info.get('ep_is_terminated', 0.0))
+                for i, finished in enumerate(finished_cpu):
+                    if finished:
+                        self.episode_score_deque.append(self.episode_score_acc[i])
 
-                # Zapasowa obsługa (np. dla SyncVectorEnv)
-                elif "final_info" in info:
-                    for i, final_info in enumerate(info["final_info"]):
-                        if finished_cpu[i] and final_info is not None:
-                            self.episode_score_deque.append(final_info['score'])
-                            self.episode_week_deque.append(final_info['week_number'])
-                            self.episode_truncated_deque.append(final_info.get('ep_is_truncated', 0.0))
-                            self.episode_terminated_deque.append(final_info.get('ep_is_terminated', 0.0))
+                        self.episode_truncated_deque.append(1.0 if truncated_cpu[i] else 0.0)
+                        self.episode_terminated_deque.append(1.0 if terminated_cpu[i] else 0.0)
 
-        # --- Koniec pętli 'step' ---
+                        self.episode_week_deque.append(1.0)
+
+                        self.episode_score_acc[i] = 0.0
+                        self.episode_week_acc[i] = 0.0
 
         with torch.no_grad():
             next_value, _ = self(self.current_obs_gpu)
@@ -235,6 +222,7 @@ class A2CTrainer(torch.nn.Module):
                 delta = buf_rewards[t] + self.gamma * next_values_step * next_non_terminal - buf_values[t]
                 advantages[t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             returns = advantages + buf_values
+
         flat_obs = {}
         for k, v in buf_obs.items():
             flat_obs[k] = v.reshape((-1,) + v.shape[2:])
@@ -303,10 +291,8 @@ class A2CTrainer(torch.nn.Module):
         avg_score = np.mean(self.episode_score_deque) if self.episode_score_deque else 0.0
         avg_week = np.mean(self.episode_week_deque) if self.episode_week_deque else 0.0
 
-        # --- DODAJ TE DWIE LINIE ---
         avg_truncated = np.mean(self.episode_truncated_deque) if self.episode_truncated_deque else 0.0
         avg_terminated = np.mean(self.episode_terminated_deque) if self.episode_terminated_deque else 0.0
-        # -----------------------------
 
         return {
             "avg_reward_per_step": self.last_avg_reward,
@@ -317,11 +303,8 @@ class A2CTrainer(torch.nn.Module):
             "avg_episode_score": avg_score,
             "avg_episode_week": avg_week,
             "episodes_in_window": len(self.episode_score_deque),
-
-            # --- DODAJ TE DWIE LINIE ---
             "avg_ep_truncated": avg_truncated,
             "avg_ep_terminated": avg_terminated,
-            # -----------------------------
         }
 
     def configure_optimizers(self):

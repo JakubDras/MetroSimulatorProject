@@ -121,7 +121,7 @@ if __name__ == "__main__":
             if current_score > best_avg_score:
                 best_avg_score = current_score
                 patience_counter = 0
-                print(f"\n✨ Nowy najlepszy wynik: {best_avg_score:.2f} w epoce {epoch}. Zapisywanie modelu...")
+                print(f"\n[SAVE] Epoka {epoch}: Nowy BEST SCORE: {best_avg_score:.2f}")
                 torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
             else:
                 patience_counter += 1
