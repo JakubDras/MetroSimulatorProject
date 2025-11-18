@@ -7,7 +7,7 @@ import gymnasium as gym
 import collections
 
 
-"""tensorboard --logdir Models/logs"""
+"""tensorboard --logdir logs"""
 
 class A2CTrainer(torch.nn.Module):
     """
@@ -42,6 +42,12 @@ class A2CTrainer(torch.nn.Module):
 
         self.episode_score_deque = collections.deque(maxlen=100)
         self.episode_week_deque = collections.deque(maxlen=100)
+
+        # --- DODAJ TE DWIE LINIE ---
+        self.episode_truncated_deque = collections.deque(maxlen=100)
+        self.episode_terminated_deque = collections.deque(maxlen=100)
+        # -----------------------------
+
 
         init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
         self.current_obs_gpu = self._obs_to_gpu(init_obs_cpu)
@@ -180,28 +186,42 @@ class A2CTrainer(torch.nn.Module):
             buf_values[step] = values
             buf_entropies[step] = entropies
 
-            next_obs_cpu, rewards_cpu, dones_cpu, _, info = self.vec_env.step(actions_list_cpu)
+            # --- POPRAWKA 1: Przechwyć 'terminated_cpu' i 'truncated_cpu' ---
+            next_obs_cpu, rewards_cpu, terminated_cpu, truncated_cpu, info = self.vec_env.step(actions_list_cpu)
 
             self.current_obs_gpu = self._obs_to_gpu(next_obs_cpu)
             buf_rewards[step] = torch.as_tensor(rewards_cpu, dtype=torch.float32, device=self.device)
-            self.current_dones = torch.as_tensor(dones_cpu, dtype=torch.float32, device=self.device)
+
+            # --- POPRAWKA 2: 'current_dones' (dla GAE) to *tylko* 'terminated_cpu' ---
+            self.current_dones = torch.as_tensor(terminated_cpu, dtype=torch.float32, device=self.device)
+
             # self.current_masks_cpu = info["action_masks"]
             self.current_masks_cpu = next_obs_cpu["action_masks"]  # <--- POBIERZ Z OBSERWACJI
 
-            if np.any(dones_cpu):
+            # --- POPRAWKA 3: Sprawdzaj zakończenie odcinka z obu powodów ---
+            finished_cpu = np.logical_or(terminated_cpu, truncated_cpu)
+
+            if np.any(finished_cpu):
                 if "final_info" in info:
-                    for i, done in enumerate(dones_cpu):
-                        if done:
+                    for i, finished in enumerate(finished_cpu):  # Użyj 'finished'
+                        if finished:  # Użyj 'finished'
                             final_info = info["final_info"][i]
                             if final_info is not None:
                                 self.episode_score_deque.append(final_info['score'])
                                 self.episode_week_deque.append(final_info['week_number'])
+
+                                # Te linie teraz poprawnie zbiorą dane
+                                self.episode_truncated_deque.append(final_info.get('ep_is_truncated', 0.0))
+                                self.episode_terminated_deque.append(final_info.get('ep_is_terminated', 0.0))
+                                # -----------------------------
+
         with torch.no_grad():
             next_value, _ = self(self.current_obs_gpu)
             next_value = next_value.flatten()
             advantages = torch.zeros_like(buf_rewards)
             last_gae_lam = 0
             for t in reversed(range(self.num_steps)):
+                # Ta linia jest teraz poprawna, bo 'buf_dones' zawiera tylko 'terminated'
                 next_non_terminal = 1.0 - buf_dones[t + 1] if t < self.num_steps - 1 else 1.0 - self.current_dones
                 next_values_step = buf_values[t + 1] if t < self.num_steps - 1 else next_value
                 delta = buf_rewards[t] + self.gamma * next_values_step * next_non_terminal - buf_values[t]
@@ -275,6 +295,11 @@ class A2CTrainer(torch.nn.Module):
         avg_score = np.mean(self.episode_score_deque) if self.episode_score_deque else 0.0
         avg_week = np.mean(self.episode_week_deque) if self.episode_week_deque else 0.0
 
+        # --- DODAJ TE DWIE LINIE ---
+        avg_truncated = np.mean(self.episode_truncated_deque) if self.episode_truncated_deque else 0.0
+        avg_terminated = np.mean(self.episode_terminated_deque) if self.episode_terminated_deque else 0.0
+        # -----------------------------
+
         return {
             "avg_reward_per_step": self.last_avg_reward,
             "loss": last_loss,
@@ -283,7 +308,12 @@ class A2CTrainer(torch.nn.Module):
             "entropy_loss": total_entropy_loss / num_updates,
             "avg_episode_score": avg_score,
             "avg_episode_week": avg_week,
-            "episodes_in_window": len(self.episode_score_deque)
+            "episodes_in_window": len(self.episode_score_deque),
+
+            # --- DODAJ TE DWIE LINIE ---
+            "avg_ep_truncated": avg_truncated,
+            "avg_ep_terminated": avg_terminated,
+            # -----------------------------
         }
 
     def configure_optimizers(self):

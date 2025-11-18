@@ -136,15 +136,17 @@ class Train:
         return None
 
     def update(self, env):
+        passengers_delivered_count = 0
+
         if not self.line or len(self.line.stations) < 2:
-            return False
+            return False, 0
 
         current_index = self.find_station_index_by_id(self.data.current_station_id)
         target_index = self.find_station_index_by_id(self.data.target_station_id)
 
         if current_index == -1 or target_index == -1:
             print("Błąd: stacja aktualna lub docelowa nie istnieje na linii. Usuwam pociąg.")
-            return False
+            return False, 0
 
         target_station = self.line.stations[target_index]
         target_pos = target_station.pos
@@ -158,7 +160,7 @@ class Train:
 
             num_stations = len(self.line.stations)
             if num_stations < 2:
-                return False
+                return False, 0
 
             current_index = self.find_station_index_by_id(self.data.current_station_id)
 
@@ -182,12 +184,13 @@ class Train:
                         self.data.target_station_id = self.line.stations[1 % num_stations].data.station_id
                         self.data.direction = 1
                         self.pos = pygame.Vector2(self.line.stations[0].pos)
-                        return False
+                        return False, 0
 
             passengers_staying = []
             for p in self.data.passengers:
                 if p.target_shape == arrived_station.data.shape:
                     env.score += 1
+                    passengers_delivered_count += 1
                 elif len(p.travel_list) == 0:
                     arrived_station.data.passengers.append(p)
                     # env.travel_planner_for_new_passager(p)
@@ -234,7 +237,7 @@ class Train:
             else:
                 self.pos = pygame.Vector2(target_pos)
 
-        return True
+        return True, passengers_delivered_count
 
     def draw(self, screen):
         if len(self.line.stations) < 2:

@@ -55,7 +55,7 @@ if __name__ == "__main__":
         gamma=0.99,
         gae_lambda=0.95,
         ppo_epochs=8,
-        num_steps=512,
+        num_steps=4096,
         batch_size=256,
         entropy_coef=0.01
     )
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     optimizer = a2c_system.configure_optimizers()
     a2c_system.model.train()
 
-    MAX_EPOCHS = 10000
+    MAX_EPOCHS = 1250
 
     SCRIPT_DIR = Path(__file__).parent
     PROJECT_ROOT = SCRIPT_DIR.parent
@@ -80,14 +80,14 @@ if __name__ == "__main__":
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
     # --- [LOGIKA MROŻENIA] ---
-    FREEZE_EPOCH = 1000
+    FREEZE_EPOCH = 125
     is_frozen = False
     # ---
 
     # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
     patience_counter = 0
-    PATIENCE_EPOCHS = 500
+    PATIENCE_EPOCHS = 63
     EPISODES_FOR_AVG = 100
     # ---
 
