@@ -42,7 +42,7 @@ class GraphTransformerModel(nn.Module):
         """
         Wyłącza obliczanie gradientów dla warstw enkodera Graph Transformer.
         """
-        print("--- 🧊 MROŻENIE WARSTW ENKODERA TRANSFORMERA ---")
+
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.encoder_conv1.parameters():

@@ -57,7 +57,6 @@ class GraphMambaModel(nn.Module):
         """
         Wyłącza obliczanie gradientów dla wszystkich warstw enkodera.
         """
-        print("--- 🧊 MROŻENIE WARSTW ENKODERA (PROJECTION + GCN + MAMBA) ---")
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.gnn_conv1.parameters():

@@ -42,7 +42,6 @@ class GNNModel(nn.Module):
         """
         Wyłącza obliczanie gradientów dla warstw enkodera GNN.
         """
-        print("--- 🧊 MROŻENIE WARSTW ENKODERA GNN ---")
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.encoder_conv1.parameters():
