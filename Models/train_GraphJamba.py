@@ -7,7 +7,7 @@ from torch.utils.tensorboard import SummaryWriter
 from pathlib import Path
 import time
 
-from model.GraphTransformer import GraphTransformerModel
+from model.GraphJamba import GraphJambaModel
 
 
 # --- Funkcja pomocnicza do tworzenia środowisk ---
@@ -17,19 +17,18 @@ def make_env():
         return env
 
     return _init
+
+
 # ------------------------------------------------
 
 if __name__ == "__main__":
 
-    print("--- URUCHAMIANIE TESTU Z GRAPH TRANSFORMER I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
-
-    EXPERIMENT_NAME = "A2C_GraphTransformer_f50_pe125"
+    # Zaktualizowana nazwa eksperymentu dla jasności w logach
+    EXPERIMENT_NAME = "A2C_GraphJamba_f20/e2e_pe125_ds8"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"--- Używane urządzenie: {device} ---")
 
     NUM_ENVS = 7
-    print(f"--- Uruchamianie {NUM_ENVS} równoległych środowisk ---")
 
     temp_env = MetroSimulatorEnv()
     num_node_features = temp_env.observation_space["node_features"].shape[1]
@@ -40,11 +39,10 @@ if __name__ == "__main__":
         [make_env() for _ in range(NUM_ENVS)]
     )
 
-    model_to_train = GraphTransformerModel(
+    model_to_train = GraphJambaModel(
         num_node_features=num_node_features,
         hidden_dim=128,
-        num_stations=num_stations,
-        heads=4
+        num_stations=num_stations
     )
 
     a2c_system = A2CTrainer(
@@ -76,14 +74,14 @@ if __name__ == "__main__":
 
     writer = SummaryWriter(LOG_PATH)
     print(f"Uruchomiono logowanie TensorBoard. Logi w: {LOG_PATH}")
-    print(f"Użyj: tensorboard --logdir logs")
 
-    print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
+    FREEZE_MAMBA_EPOCH = 20
 
-    # --- [LOGIKA MROŻENIA] ---
-    FREEZE_EPOCH = 50
-    is_frozen = False
-    # ---
+    FREEZE_GNN_EPOCH = 2000
+
+    is_mamba_frozen = False
+    is_gnn_frozen = False
+    # ----------------------------------------
 
     # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
@@ -94,15 +92,27 @@ if __name__ == "__main__":
 
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
 
-        if not is_frozen and epoch >= FREEZE_EPOCH:
-            a2c_system.model.freeze_encoder_layers()
+        if not is_mamba_frozen and epoch >= FREEZE_MAMBA_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 1: Mrożenie Hybrydy (Mamba + Attn) ---")
 
-            print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            a2c_system.model.freeze_mamba_block()
+
             optimizer = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
                 lr=a2c_system.lr
             )
-            is_frozen = True
+            is_mamba_frozen = True
+
+        if not is_gnn_frozen and epoch >= FREEZE_GNN_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 2: Mrożenie warstw GNN ---")
+
+            a2c_system.model.freeze_gnn_layers()
+
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr
+            )
+            is_gnn_frozen = True
 
         metrics = a2c_system.training_step(optimizer)
 
@@ -125,7 +135,6 @@ if __name__ == "__main__":
                 patience_counter = 0
                 print(f"\n[SAVE] Epoka {epoch}: Nowy BEST SCORE: {best_avg_score:.2f}")
                 torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
-
             else:
                 patience_counter += 1
 
@@ -135,6 +144,5 @@ if __name__ == "__main__":
                 print(f"Zatrzymywanie treningu w epoce {epoch}.")
                 break
 
-    print("Trening zakończony.")
     writer.close()
     vec_env.close()

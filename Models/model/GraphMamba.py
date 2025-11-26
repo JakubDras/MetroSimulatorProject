@@ -23,7 +23,7 @@ class GraphMambaModel(nn.Module):
 
         self.mamba = Mamba(
             d_model=hidden_dim,
-            d_state=16,
+            d_state=8, #Można spróbować później 8. 16 to za dużo
             d_conv=4,
             expand=2,
         )
@@ -52,6 +52,21 @@ class GraphMambaModel(nn.Module):
 
         h_final = self.norm(h_gnn + h_mamba)
         return h_final
+
+    def freeze_mamba_block(self):
+        for param in self.mamba.parameters():
+            param.requires_grad = False
+        for param in self.norm.parameters():
+            param.requires_grad = False
+
+    def freeze_gnn_layers(self):
+        for param in self.initial_projection.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv1.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv2.parameters():
+            param.requires_grad = False
+
 
     def freeze_encoder_layers(self):
         """

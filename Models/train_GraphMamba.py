@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     print("--- URUCHAMIANIE TESTU Z GRAPH MAMBA I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    EXPERIMENT_NAME = "A2C_GraphMamba"
+    EXPERIMENT_NAME = "A2C_GraphMamba_f20/e2e_pe125_ds8"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
@@ -80,29 +80,61 @@ if __name__ == "__main__":
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
     # --- [LOGIKA MROŻENIA] ---
-    FREEZE_EPOCH = 125
-    is_frozen = False
+    FREEZE_MAMBA_EPOCH = 20
+    FREEZE_GNN_EPOCH = 1250
+
+    is_mamba_frozen = False
+    is_gnn_frozen = False
     # ---
 
     # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
     patience_counter = 0
-    PATIENCE_EPOCHS = 63
+    PATIENCE_EPOCHS = 125
     EPISODES_FOR_AVG = 100
     # ---
 
+
+    """ Dla freeza GNN i mamby jednocześnie"""
+    # for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+    #
+    #     if not is_frozen and epoch >= FREEZE_EPOCH:
+    #         a2c_system.model.freeze_encoder_layers()
+    #
+    #         print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+    #         optimizer = torch.optim.Adam(
+    #             filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+    #             lr=a2c_system.lr
+    #         )
+    #         is_frozen = True
+
+#-----------------------------------------------
+    """Mrożenie Mamby i GNN osobno"""
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
 
-        if not is_frozen and epoch >= FREEZE_EPOCH:
-            a2c_system.model.freeze_encoder_layers()
+        if not is_mamba_frozen and epoch >= FREEZE_MAMBA_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 1: Mrożenie bloku MAMBA ---")
 
-            print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            a2c_system.model.freeze_mamba_block()
+
             optimizer = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
                 lr=a2c_system.lr
             )
-            is_frozen = True
+            is_mamba_frozen = True
 
+        if not is_gnn_frozen and epoch >= FREEZE_GNN_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 2: Mrożenie warstw GNN ---")
+
+            a2c_system.model.freeze_gnn_layers()
+
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr
+            )
+            is_gnn_frozen = True
+
+#---------------------------------------------------
         metrics = a2c_system.training_step(optimizer)
 
         for key, value in metrics.items():
