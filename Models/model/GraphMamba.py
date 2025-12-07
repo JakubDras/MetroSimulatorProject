@@ -27,6 +27,12 @@ class GraphMambaModel(nn.Module):
             d_conv=4,
             expand=2,
         )
+
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU()
+        )
+
         self.norm = nn.LayerNorm(hidden_dim)
 
         self.critic_head = nn.Linear(hidden_dim, 1)
@@ -50,7 +56,11 @@ class GraphMambaModel(nn.Module):
         seq_out = self.mamba(seq_in)
         h_mamba = seq_out.squeeze(0)
 
-        h_final = self.norm(h_gnn + h_mamba)
+        combined = torch.cat([h_gnn, h_mamba], dim=-1)
+
+        h_fused = self.fusion_layer(combined)
+
+        h_final = self.norm(h_fused + h_gnn)
         return h_final
 
     def freeze_mamba_block(self):
@@ -65,6 +75,8 @@ class GraphMambaModel(nn.Module):
         for param in self.gnn_conv1.parameters():
             param.requires_grad = False
         for param in self.gnn_conv2.parameters():
+            param.requires_grad = False
+        for param in self.fusion_layer.parameters():
             param.requires_grad = False
 
 

@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     print("--- URUCHAMIANIE TESTU Z GNN I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    EXPERIMENT_NAME = "A2C_GNN_Baseline"
+    EXPERIMENT_NAME = "A2C_GNN_Baseline_end2end_seed42h"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
@@ -80,14 +80,14 @@ if __name__ == "__main__":
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
     # --- [LOGIKA MROŻENIA] ---
-    FREEZE_EPOCH = 125
+    FREEZE_EPOCH = 1250
     is_frozen = False
     # ---
 
     # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
     patience_counter = 0
-    PATIENCE_EPOCHS = 63
+    PATIENCE_EPOCHS = 125
     EPISODES_FOR_AVG = 100
     # ---
 

@@ -658,6 +658,10 @@ class MetroSimulatorEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+
         self.current_step = 0
 
         if self.screen is None and self.render_mode == "human":

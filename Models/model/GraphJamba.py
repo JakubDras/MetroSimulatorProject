@@ -7,10 +7,6 @@ import gymnasium_env_metro.config as config
 
 
 class GraphJambaModel(nn.Module):
-    """
-    GraphMamba Hybrid: GCN + (Mamba || Self-Attention).
-    Łączy model stanowy (SSM) z mechanizmem uwagi dla lepszej reprezentacji.
-    """
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
@@ -20,6 +16,7 @@ class GraphJambaModel(nn.Module):
         self.gnn_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.gnn_conv2 = GCNConv(hidden_dim, hidden_dim)
 
+        # 1. Mamba
         self.mamba = Mamba(
             d_model=hidden_dim,
             d_state=8,
@@ -27,11 +24,18 @@ class GraphJambaModel(nn.Module):
             expand=2,
         )
 
+        # 2. Attention
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=4,
             batch_first=True
         )
+
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.ReLU()
+        )
+        # -----------------------------
 
         self.norm = nn.LayerNorm(hidden_dim)
 
@@ -55,17 +59,23 @@ class GraphJambaModel(nn.Module):
 
         out_attn, _ = self.self_attn(x, x, x)
 
-        h_hybrid = x + out_mamba + out_attn
+        combined = torch.cat([x, out_mamba, out_attn], dim=-1)
 
-        h_final = self.norm(h_hybrid).squeeze(0)
+        h_hybrid = self.fusion_layer(combined)
+
+        h_res = h_hybrid + x
+
+        h_final = self.norm(h_res).squeeze(0)
 
         return h_final
 
     def freeze_mamba_block(self):
-        print("---MROŻENIE BLOKU HYBRYDOWEGO (MAMBA + ATTN) ---")
+        print("--- MROŻENIE BLOKU HYBRYDOWEGO ---")
         for param in self.mamba.parameters():
             param.requires_grad = False
         for param in self.self_attn.parameters():
+            param.requires_grad = False
+        for param in self.fusion_layer.parameters():
             param.requires_grad = False
         for param in self.norm.parameters():
             param.requires_grad = False

@@ -49,8 +49,8 @@ class A2CTrainer(torch.nn.Module):
         self.episode_score_acc = np.zeros(num_envs, dtype=np.float32)
         self.episode_week_acc = np.zeros(num_envs, dtype=np.float32)
 
-
-        init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
+        init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=42)
+        # init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
         self.current_obs_gpu = self._obs_to_gpu(init_obs_cpu)
 
         self.current_masks_cpu = init_obs_cpu["action_masks"]
