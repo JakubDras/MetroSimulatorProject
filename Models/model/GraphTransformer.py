@@ -6,10 +6,6 @@ import gymnasium_env_metro.config as config
 
 
 class GraphTransformerModel(nn.Module):
-    """
-    Definicja architektury sieci opartej na Graph Transformer.
-    Obsługuje teraz paczki (batche) grafów ze zrównoleglonych środowisk.
-    """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int, heads: int = 4):
         super().__init__()
@@ -28,9 +24,7 @@ class GraphTransformerModel(nn.Module):
         self.select_line_head = nn.Linear(hidden_dim, num_line_colors)
 
     def encode(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """
-        Przetwarza cechy węzłów, a następnie wzbogaca je o informacje z grafu.
-        """
+
         h = self.initial_projection(node_features).relu()
 
         if edge_index.shape[1] > 0:
@@ -39,9 +33,6 @@ class GraphTransformerModel(nn.Module):
         return h
 
     def freeze_encoder_layers(self):
-        """
-        Wyłącza obliczanie gradientów dla warstw enkodera Graph Transformer.
-        """
 
         for param in self.initial_projection.parameters():
             param.requires_grad = False
@@ -51,9 +42,7 @@ class GraphTransformerModel(nn.Module):
             param.requires_grad = False
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-        """
-        NOWA METODA FORWARD (bez zmian)
-        """
+
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()

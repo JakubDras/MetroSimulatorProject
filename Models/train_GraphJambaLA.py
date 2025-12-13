@@ -10,7 +10,6 @@ import time
 from model.GraphJambaLA import GraphJambaLinearAttentionModel
 
 
-# --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
         env = MetroSimulatorEnv()
@@ -38,7 +37,6 @@ if __name__ == "__main__":
         [make_env() for _ in range(NUM_ENVS)]
     )
 
-    # ZMIANA: Użycie GraphJambaLinearModel
     model_to_train = GraphJambaLinearAttentionModel(
         num_node_features=num_node_features,
         hidden_dim=128,

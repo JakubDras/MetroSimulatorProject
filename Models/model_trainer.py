@@ -10,11 +10,6 @@ import collections
 """tensorboard --logdir logs"""
 
 class A2CTrainer(torch.nn.Module):
-    """
-    Ta klasa jest teraz zwykłym modułem PyTorch, który zarządza
-    zbieraniem danych z wielu środowisk (wektoryzacją) i
-    przeprowadzaniem kroków optymalizacyjnych.
-    """
 
     def __init__(self, model: nn.Module, vec_env: gym.vector.AsyncVectorEnv,
                  device: torch.device, num_envs: int,
@@ -58,7 +53,6 @@ class A2CTrainer(torch.nn.Module):
         self.current_dones = torch.zeros(self.num_envs, device=self.device)
 
     def _obs_to_gpu(self, obs_cpu: dict) -> dict:
-        """Ręcznie przenosi obserwacje (słownik numpy) na GPU."""
         obs_gpu = {}
         for k, v in obs_cpu.items():
             if k == "action_masks": continue
@@ -66,7 +60,6 @@ class A2CTrainer(torch.nn.Module):
         return obs_gpu
 
     def forward(self, obs_gpu: dict) -> tuple[torch.Tensor, dict]:
-        """Przekazuje wywołanie do modelu (obsługa paczek)"""
         return self.model(obs_gpu, self.device)
 
     @torch.no_grad()

@@ -7,10 +7,6 @@ import gymnasium_env_metro.config as config
 
 
 class GraphMambaModel(nn.Module):
-    """
-    Definicja architektury sieci opartej na GCN + Mamba.
-    (Poprawiona o spójną warstwę initial_projection)
-    """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
@@ -81,9 +77,7 @@ class GraphMambaModel(nn.Module):
 
 
     def freeze_encoder_layers(self):
-        """
-        Wyłącza obliczanie gradientów dla wszystkich warstw enkodera.
-        """
+
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.gnn_conv1.parameters():
@@ -96,9 +90,7 @@ class GraphMambaModel(nn.Module):
             param.requires_grad = False
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-        """
-        NOWA METODA FORWARD (bez zmian, w pełni kompatybilna)
-        """
+
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()

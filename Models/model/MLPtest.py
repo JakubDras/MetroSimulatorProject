@@ -4,11 +4,6 @@ import gymnasium_env_metro.config as config
 
 
 class MLPModel(nn.Module):
-    """
-    Prosty model testowy (MLP), który spłaszcza obserwacje.
-    Ma taki sam "interfejs" (te same głowice wyjściowe) co GNNModel,
-    więc można go podłączyć do tego samego trenera.
-    """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()

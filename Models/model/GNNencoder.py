@@ -6,10 +6,6 @@ import gymnasium_env_metro.config as config
 
 
 class GNNModel(nn.Module):
-    """
-    Definicja architektury sieci opartej na GNN.
-    Obsługuje teraz paczki (batche) grafów ze zrównoleglonych środowisk.
-    """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
@@ -28,10 +24,7 @@ class GNNModel(nn.Module):
         self.select_line_head = nn.Linear(hidden_dim, num_line_colors)
 
     def encode(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """
-        Przetwarza cechy węzłów, a następnie opcjonalnie wzbogaca je o informacje z grafu.
-        Ta metoda jest już poprawna i nie wymaga zmian.
-        """
+
         h = self.initial_projection(node_features).relu()
         if edge_index.shape[1] > 0:
             h = self.encoder_conv1(h, edge_index).relu()
@@ -39,9 +32,7 @@ class GNNModel(nn.Module):
         return h
 
     def freeze_encoder_layers(self):
-        """
-        Wyłącza obliczanie gradientów dla warstw enkodera GNN.
-        """
+
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.encoder_conv1.parameters():
@@ -50,9 +41,7 @@ class GNNModel(nn.Module):
             param.requires_grad = False
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-        """
-        NOWA METODA FORWARD (bez zmian)
-        """
+
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()

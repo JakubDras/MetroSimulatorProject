@@ -10,7 +10,6 @@ import time
 from model.GraphJamba import GraphJambaModel
 
 
-# --- Funkcja pomocnicza do tworzenia środowisk ---
 def make_env():
     def _init():
         env = MetroSimulatorEnv()
@@ -23,7 +22,6 @@ def make_env():
 
 if __name__ == "__main__":
 
-    # Zaktualizowana nazwa eksperymentu dla jasności w logach
     EXPERIMENT_NAME = "A2C_GraphJamba_f20/e2e_pe125_ds8"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

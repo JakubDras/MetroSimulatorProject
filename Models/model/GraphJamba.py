@@ -16,7 +16,7 @@ class GraphJambaModel(nn.Module):
         self.gnn_conv1 = GCNConv(hidden_dim, hidden_dim)
         self.gnn_conv2 = GCNConv(hidden_dim, hidden_dim)
 
-        # 1. Mamba
+        #Mamba
         self.mamba = Mamba(
             d_model=hidden_dim,
             d_state=8,
@@ -24,7 +24,7 @@ class GraphJambaModel(nn.Module):
             expand=2,
         )
 
-        # 2. Attention
+        #Attention
         self.self_attn = nn.MultiheadAttention(
             embed_dim=hidden_dim,
             num_heads=4,
