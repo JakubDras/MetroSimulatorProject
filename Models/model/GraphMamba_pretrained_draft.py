@@ -66,7 +66,6 @@ class GraphMambaHFModel(nn.Module):
         Wyłącza obliczanie gradientów dla warstw GNN (adaptera).
         Zakładamy, że mamba_backbone jest już zamrożona.
         """
-        print("--- 🧊 MROŻENIE WARSTW ENKODERA (PROJECTION + GCN + NORM) ---")
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.encoder_conv1.parameters():

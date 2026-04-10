@@ -1,19 +1,77 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_geometric.nn import GCNConv, global_mean_pool
+from mamba_ssm import Mamba
 
 import gymnasium_env_metro.config as config
 
+class LinearAttention(nn.Module):
+    def __init__(self, dim, heads=4, dropout=0.0):
+        super().__init__()
+        self.heads = heads
+        self.head_dim = dim // heads
+        assert dim % heads == 0, "Dimension must be divisible by heads"
 
-class GNNModel(nn.Module):
+        self.to_qkv = nn.Linear(dim, dim * 3, bias=False)
+        self.to_out = nn.Sequential(
+            nn.Linear(dim, dim),
+            nn.Dropout(dropout)
+        )
 
+    def forward(self, x):
+        b, n, d = x.shape
+
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: t.reshape(b, n, self.heads, self.head_dim).permute(0, 2, 1, 3), qkv)
+
+        q = F.elu(q) + 1
+        k = F.elu(k) + 1
+
+        kv = torch.matmul(k.transpose(-1, -2), v)
+
+        z = torch.matmul(q, kv)
+
+        k_sum = k.sum(dim=-2, keepdim=True)
+        norm = torch.matmul(q, k_sum.transpose(-1, -2))
+
+        out = z / (norm + 1e-6)
+
+        out = out.permute(0, 2, 1, 3).reshape(b, n, d)
+
+        return self.to_out(out), None
+
+
+# -----------------------------------
+
+class GraphJambaLinearAttentionModel(nn.Module):
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
 
         self.initial_projection = nn.Linear(num_node_features, hidden_dim)
-        self.encoder_conv1 = GCNConv(hidden_dim, hidden_dim)
-        self.encoder_conv2 = GCNConv(hidden_dim, hidden_dim)
+
+        self.gnn_conv1 = GCNConv(hidden_dim, hidden_dim)
+        self.gnn_conv2 = GCNConv(hidden_dim, hidden_dim)
+
+        self.mamba = Mamba(
+            d_model=hidden_dim,
+            d_state=8,
+            d_conv=4,
+            expand=2,
+        )
+
+        self.linear_attn = LinearAttention(
+            dim=hidden_dim,
+            heads=4
+        )
+
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.ReLU()
+        )
+
+        self.norm = nn.LayerNorm(hidden_dim)
 
         self.critic_head = nn.Linear(hidden_dim, 1)
         self.high_level_head = nn.Linear(hidden_dim, 4)
@@ -26,22 +84,49 @@ class GNNModel(nn.Module):
     def encode(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
 
         h = self.initial_projection(node_features).relu()
-        if edge_index.shape[1] > 0:
-            h = self.encoder_conv1(h, edge_index).relu()
-            h = self.encoder_conv2(h, edge_index).relu()
-        return h
+        h_gnn = self.gnn_conv1(h, edge_index).relu()
+        h_gnn = self.gnn_conv2(h_gnn, edge_index).relu()
 
-    def freeze_encoder_layers(self):
+        x = h_gnn.unsqueeze(0)
 
+        out_mamba = self.mamba(x)
+
+        out_attn, _ = self.linear_attn(x)
+
+        combined = torch.cat([x, out_mamba, out_attn], dim=-1)
+
+        h_hybrid = self.fusion_layer(combined)
+
+        h_res = h_hybrid + x
+        h_final = self.norm(h_res).squeeze(0)
+
+        return h_final
+
+    def freeze_mamba_block(self):
+        print("--- MROŻENIE BLOKU HYBRYDOWEGO (Mamba + Linear Attn) ---")
+        for param in self.mamba.parameters():
+            param.requires_grad = False
+        for param in self.linear_attn.parameters():
+            param.requires_grad = False
+        for param in self.fusion_layer.parameters():
+            param.requires_grad = False
+        for param in self.norm.parameters():
+            param.requires_grad = False
+
+    def freeze_gnn_layers(self):
+        print("--- MROŻENIE GNN ---")
         for param in self.initial_projection.parameters():
             param.requires_grad = False
-        for param in self.encoder_conv1.parameters():
+        for param in self.gnn_conv1.parameters():
             param.requires_grad = False
-        for param in self.encoder_conv2.parameters():
+        for param in self.gnn_conv2.parameters():
             param.requires_grad = False
+
+    def freeze_encoder_layers(self):
+        self.freeze_mamba_block()
+        self.freeze_gnn_layers()
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
@@ -72,8 +157,9 @@ class GNNModel(nn.Module):
             current_node_offset += num_nodes
 
         if current_node_offset == 0:
-            print("Ostrzeżenie: Pusty batch w GNNModel.forward")
-            graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
+            print("Ostrzeżenie: Pusty batch w GraphJambaLinearModel.forward")
+            output_dim = self.gnn_conv2.out_channels
+            graph_embedding = torch.zeros(batch_size, output_dim, device=device)
 
         else:
             h_nodes = torch.cat(all_valid_nodes, dim=0)
@@ -89,7 +175,8 @@ class GNNModel(nn.Module):
             graph_embedding = global_mean_pool(node_embeddings, h_batch)
 
             if graph_embedding.shape[0] < batch_size:
-                full_graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
+                output_dim = self.gnn_conv2.out_channels
+                full_graph_embedding = torch.zeros(batch_size, output_dim, device=device)
                 full_graph_embedding[torch.unique(h_batch)] = graph_embedding
                 graph_embedding = full_graph_embedding
 

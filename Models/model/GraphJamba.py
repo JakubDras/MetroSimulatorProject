@@ -1,19 +1,43 @@
 import torch
 import torch.nn as nn
 from torch_geometric.nn import GCNConv, global_mean_pool
+from mamba_ssm import Mamba
 
 import gymnasium_env_metro.config as config
 
 
-class GNNModel(nn.Module):
-
+class GraphJambaModel(nn.Module):
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
         num_line_colors = len(config.LINE_COLORS)
 
         self.initial_projection = nn.Linear(num_node_features, hidden_dim)
-        self.encoder_conv1 = GCNConv(hidden_dim, hidden_dim)
-        self.encoder_conv2 = GCNConv(hidden_dim, hidden_dim)
+
+        self.gnn_conv1 = GCNConv(hidden_dim, hidden_dim)
+        self.gnn_conv2 = GCNConv(hidden_dim, hidden_dim)
+
+        #Mamba
+        self.mamba = Mamba(
+            d_model=hidden_dim,
+            d_state=8,
+            d_conv=4,
+            expand=2,
+        )
+
+        #Attention
+        self.self_attn = nn.MultiheadAttention(
+            embed_dim=hidden_dim,
+            num_heads=4,
+            batch_first=True
+        )
+
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.ReLU()
+        )
+        # -----------------------------
+
+        self.norm = nn.LayerNorm(hidden_dim)
 
         self.critic_head = nn.Linear(hidden_dim, 1)
         self.high_level_head = nn.Linear(hidden_dim, 4)
@@ -26,22 +50,50 @@ class GNNModel(nn.Module):
     def encode(self, node_features: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
 
         h = self.initial_projection(node_features).relu()
-        if edge_index.shape[1] > 0:
-            h = self.encoder_conv1(h, edge_index).relu()
-            h = self.encoder_conv2(h, edge_index).relu()
-        return h
+        h_gnn = self.gnn_conv1(h, edge_index).relu()
+        h_gnn = self.gnn_conv2(h_gnn, edge_index).relu()
 
-    def freeze_encoder_layers(self):
+        x = h_gnn.unsqueeze(0)
 
+        out_mamba = self.mamba(x)
+
+        out_attn, _ = self.self_attn(x, x, x)
+
+        combined = torch.cat([x, out_mamba, out_attn], dim=-1)
+
+        h_hybrid = self.fusion_layer(combined)
+
+        h_res = h_hybrid + x
+
+        h_final = self.norm(h_res).squeeze(0)
+
+        return h_final
+
+    def freeze_mamba_block(self):
+        print("--- MROŻENIE BLOKU HYBRYDOWEGO ---")
+        for param in self.mamba.parameters():
+            param.requires_grad = False
+        for param in self.self_attn.parameters():
+            param.requires_grad = False
+        for param in self.fusion_layer.parameters():
+            param.requires_grad = False
+        for param in self.norm.parameters():
+            param.requires_grad = False
+
+    def freeze_gnn_layers(self):
+        print("--- MROŻENIE GNN ---")
         for param in self.initial_projection.parameters():
             param.requires_grad = False
-        for param in self.encoder_conv1.parameters():
+        for param in self.gnn_conv1.parameters():
             param.requires_grad = False
-        for param in self.encoder_conv2.parameters():
+        for param in self.gnn_conv2.parameters():
             param.requires_grad = False
+
+    def freeze_encoder_layers(self):
+        self.freeze_mamba_block()
+        self.freeze_gnn_layers()
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
@@ -72,8 +124,9 @@ class GNNModel(nn.Module):
             current_node_offset += num_nodes
 
         if current_node_offset == 0:
-            print("Ostrzeżenie: Pusty batch w GNNModel.forward")
-            graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
+            print("Ostrzeżenie: Pusty batch w GraphMambaModel.forward")
+            output_dim = self.gnn_conv2.out_channels
+            graph_embedding = torch.zeros(batch_size, output_dim, device=device)
 
         else:
             h_nodes = torch.cat(all_valid_nodes, dim=0)
@@ -89,7 +142,8 @@ class GNNModel(nn.Module):
             graph_embedding = global_mean_pool(node_embeddings, h_batch)
 
             if graph_embedding.shape[0] < batch_size:
-                full_graph_embedding = torch.zeros(batch_size, self.encoder_conv2.out_channels, device=device)
+                output_dim = self.gnn_conv2.out_channels
+                full_graph_embedding = torch.zeros(batch_size, output_dim, device=device)
                 full_graph_embedding[torch.unique(h_batch)] = graph_embedding
                 graph_embedding = full_graph_embedding
 

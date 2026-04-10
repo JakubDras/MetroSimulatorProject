@@ -7,14 +7,9 @@ import gymnasium as gym
 import collections
 
 
-"""tensorboard --logdir Models/logs"""
+"""tensorboard --logdir logs"""
 
 class A2CTrainer(torch.nn.Module):
-    """
-    Ta klasa jest teraz zwykłym modułem PyTorch, który zarządza
-    zbieraniem danych z wielu środowisk (wektoryzacją) i
-    przeprowadzaniem kroków optymalizacyjnych.
-    """
 
     def __init__(self, model: nn.Module, vec_env: gym.vector.AsyncVectorEnv,
                  device: torch.device, num_envs: int,
@@ -43,13 +38,21 @@ class A2CTrainer(torch.nn.Module):
         self.episode_score_deque = collections.deque(maxlen=100)
         self.episode_week_deque = collections.deque(maxlen=100)
 
-        init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
+        self.episode_truncated_deque = collections.deque(maxlen=100)
+        self.episode_terminated_deque = collections.deque(maxlen=100)
+
+        self.episode_score_acc = np.zeros(num_envs, dtype=np.float32)
+        self.episode_week_acc = np.zeros(num_envs, dtype=np.float32)
+
+        init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=42)
+        # init_obs_cpu, init_info_cpu = self.vec_env.reset(seed=np.random.randint(0, 100000))
         self.current_obs_gpu = self._obs_to_gpu(init_obs_cpu)
-        self.current_masks_cpu = init_info_cpu["action_masks"]
+
+        self.current_masks_cpu = init_obs_cpu["action_masks"]
+
         self.current_dones = torch.zeros(self.num_envs, device=self.device)
 
     def _obs_to_gpu(self, obs_cpu: dict) -> dict:
-        """Ręcznie przenosi obserwacje (słownik numpy) na GPU."""
         obs_gpu = {}
         for k, v in obs_cpu.items():
             if k == "action_masks": continue
@@ -57,7 +60,6 @@ class A2CTrainer(torch.nn.Module):
         return obs_gpu
 
     def forward(self, obs_gpu: dict) -> tuple[torch.Tensor, dict]:
-        """Przekazuje wywołanie do modelu (obsługa paczek)"""
         return self.model(obs_gpu, self.device)
 
     @torch.no_grad()
@@ -177,20 +179,31 @@ class A2CTrainer(torch.nn.Module):
             buf_values[step] = values
             buf_entropies[step] = entropies
 
-            next_obs_cpu, rewards_cpu, dones_cpu, _, info = self.vec_env.step(actions_list_cpu)
+            next_obs_cpu, rewards_cpu, terminated_cpu, truncated_cpu, info = self.vec_env.step(actions_list_cpu)
 
             self.current_obs_gpu = self._obs_to_gpu(next_obs_cpu)
             buf_rewards[step] = torch.as_tensor(rewards_cpu, dtype=torch.float32, device=self.device)
-            self.current_dones = torch.as_tensor(dones_cpu, dtype=torch.float32, device=self.device)
-            self.current_masks_cpu = info["action_masks"]
+            self.current_dones = torch.as_tensor(terminated_cpu, dtype=torch.float32, device=self.device)
+            self.current_masks_cpu = next_obs_cpu["action_masks"]
 
-            if np.any(dones_cpu):
-                for i, done in enumerate(dones_cpu):
-                    if done:
-                        final_info = info["final_info"][i]
+            self.episode_score_acc += rewards_cpu
+            self.episode_week_acc += (terminated_cpu | truncated_cpu)
 
-                        self.episode_score_deque.append(final_info['score'])
-                        self.episode_week_deque.append(final_info['week_number'])
+            finished_cpu = np.logical_or(terminated_cpu, truncated_cpu)
+
+            if np.any(finished_cpu):
+                for i, finished in enumerate(finished_cpu):
+                    if finished:
+                        self.episode_score_deque.append(self.episode_score_acc[i])
+
+                        self.episode_truncated_deque.append(1.0 if truncated_cpu[i] else 0.0)
+                        self.episode_terminated_deque.append(1.0 if terminated_cpu[i] else 0.0)
+
+                        self.episode_week_deque.append(1.0)
+
+                        self.episode_score_acc[i] = 0.0
+                        self.episode_week_acc[i] = 0.0
+
         with torch.no_grad():
             next_value, _ = self(self.current_obs_gpu)
             next_value = next_value.flatten()
@@ -202,6 +215,7 @@ class A2CTrainer(torch.nn.Module):
                 delta = buf_rewards[t] + self.gamma * next_values_step * next_non_terminal - buf_values[t]
                 advantages[t] = last_gae_lam = delta + self.gamma * self.gae_lambda * next_non_terminal * last_gae_lam
             returns = advantages + buf_values
+
         flat_obs = {}
         for k, v in buf_obs.items():
             flat_obs[k] = v.reshape((-1,) + v.shape[2:])
@@ -270,6 +284,9 @@ class A2CTrainer(torch.nn.Module):
         avg_score = np.mean(self.episode_score_deque) if self.episode_score_deque else 0.0
         avg_week = np.mean(self.episode_week_deque) if self.episode_week_deque else 0.0
 
+        avg_truncated = np.mean(self.episode_truncated_deque) if self.episode_truncated_deque else 0.0
+        avg_terminated = np.mean(self.episode_terminated_deque) if self.episode_terminated_deque else 0.0
+
         return {
             "avg_reward_per_step": self.last_avg_reward,
             "loss": last_loss,
@@ -278,7 +295,9 @@ class A2CTrainer(torch.nn.Module):
             "entropy_loss": total_entropy_loss / num_updates,
             "avg_episode_score": avg_score,
             "avg_episode_week": avg_week,
-            "episodes_in_window": len(self.episode_score_deque)
+            "episodes_in_window": len(self.episode_score_deque),
+            "avg_ep_truncated": avg_truncated,
+            "avg_ep_terminated": avg_terminated,
         }
 
     def configure_optimizers(self):

@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     print("--- URUCHAMIANIE TESTU Z GRAPH MAMBA I RÓWNOLEGŁYMI ŚRODOWISKAMI ---")
 
-    EXPERIMENT_NAME = "A2C_GraphMamba"
+    EXPERIMENT_NAME = "A2C_GraphMamba_f20/e2e_pe125_ds8"
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--- Używane urządzenie: {device} ---")
@@ -55,7 +55,7 @@ if __name__ == "__main__":
         gamma=0.99,
         gae_lambda=0.95,
         ppo_epochs=8,
-        num_steps=512,
+        num_steps=4096,
         batch_size=256,
         entropy_coef=0.01
     )
@@ -64,7 +64,7 @@ if __name__ == "__main__":
     optimizer = a2c_system.configure_optimizers()
     a2c_system.model.train()
 
-    MAX_EPOCHS = 10000
+    MAX_EPOCHS = 1250
 
     SCRIPT_DIR = Path(__file__).parent
     PROJECT_ROOT = SCRIPT_DIR.parent
@@ -80,29 +80,61 @@ if __name__ == "__main__":
     print("Rozpoczynanie treningu z ręczną pętlą (wektoryzacja)...")
 
     # --- [LOGIKA MROŻENIA] ---
-    FREEZE_EPOCH = 1000  # Epoka, w której mrozimy enkodera
-    is_frozen = False
+    FREEZE_MAMBA_EPOCH = 20
+    FREEZE_GNN_EPOCH = 1250
+
+    is_mamba_frozen = False
+    is_gnn_frozen = False
     # ---
 
     # --- [EARLY STOPPING] ---
     best_avg_score = -float('inf')
     patience_counter = 0
-    PATIENCE_EPOCHS = 500
+    PATIENCE_EPOCHS = 125
     EPISODES_FOR_AVG = 100
     # ---
 
+
+    """ Dla freeza GNN i mamby jednocześnie"""
+    # for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
+    #
+    #     if not is_frozen and epoch >= FREEZE_EPOCH:
+    #         a2c_system.model.freeze_encoder_layers()
+    #
+    #         print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+    #         optimizer = torch.optim.Adam(
+    #             filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+    #             lr=a2c_system.lr
+    #         )
+    #         is_frozen = True
+
+#-----------------------------------------------
+    """Mrożenie Mamby i GNN osobno"""
     for epoch in (pbar := tqdm(range(MAX_EPOCHS))):
 
-        if not is_frozen and epoch >= FREEZE_EPOCH:
-            a2c_system.model.freeze_encoder_layers()
+        if not is_mamba_frozen and epoch >= FREEZE_MAMBA_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 1: Mrożenie bloku MAMBA ---")
 
-            print("\n---  Mrożenie warstw enkodera. Tworzenie nowego optymalizatora... ---")
+            a2c_system.model.freeze_mamba_block()
+
             optimizer = torch.optim.Adam(
                 filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
                 lr=a2c_system.lr
             )
-            is_frozen = True
+            is_mamba_frozen = True
 
+        if not is_gnn_frozen and epoch >= FREEZE_GNN_EPOCH:
+            print(f"\n[{epoch}] --- ETAP 2: Mrożenie warstw GNN ---")
+
+            a2c_system.model.freeze_gnn_layers()
+
+            optimizer = torch.optim.Adam(
+                filter(lambda p: p.requires_grad, a2c_system.model.parameters()),
+                lr=a2c_system.lr
+            )
+            is_gnn_frozen = True
+
+#---------------------------------------------------
         metrics = a2c_system.training_step(optimizer)
 
         for key, value in metrics.items():
@@ -122,7 +154,7 @@ if __name__ == "__main__":
             if current_score > best_avg_score:
                 best_avg_score = current_score
                 patience_counter = 0
-                print(f"\n✨ Nowy najlepszy wynik: {best_avg_score:.2f} w epoce {epoch}. Zapisywanie modelu...")
+                print(f"\n[SAVE] Epoka {epoch}: Nowy BEST SCORE: {best_avg_score:.2f}")
                 torch.save(a2c_system.model.state_dict(), LOG_PATH / f"best_model.pth")
 
             else:

@@ -202,7 +202,7 @@ class MetroSimulatorEnv(gym.Env):
 
     def _update_passenger_spawning(self):
 
-        score_based_reduction = math.floor((self.score + len(self.stations)*1.5))
+        score_based_reduction = math.floor((self.score/7 + (len(self.stations)+self.week_number)))
 
         current_spawn_rate = config.BASE_PASSENGER_SPAWN_RATE - math.floor(score_based_reduction/config.SCORE_DIVISOR_FOR_REDUCTION)
 
@@ -228,12 +228,25 @@ class MetroSimulatorEnv(gym.Env):
                 self.game_over = True
 
     def _update_trains(self) -> float:
-        reward = 0
-        trains_to_remove = [t for t in self.trains if not t.update(self)]
+        reward_from_trains = 0.0
+        trains_to_remove = []
+
+        for t in self.trains:
+            continues, passengers_delivered = t.update(self)
+
+            agent_reward = passengers_delivered * 50.0
+
+            reward_from_trains += agent_reward
+
+            if not continues:
+                trains_to_remove.append(t)
+
+        self.trains = [t for t in self.trains if t not in trains_to_remove]
+
         if trains_to_remove:
-            self.trains = [t for t in self.trains if t not in trains_to_remove]
-            reward -= 0.5 * len(trains_to_remove)
-        return reward
+            reward_from_trains -= 0.5 * len(trains_to_remove)
+
+        return reward_from_trains
 
     def _update_station_spawning(self):
         if len(self.stations) >= config.MAX_STATIONS or self.spawned_stations_this_week >= config.STATIONS_TO_SPAWN_PER_WEEK:
@@ -292,7 +305,11 @@ class MetroSimulatorEnv(gym.Env):
             self.week_number += 1
             self.available_trains += 1
             self.spawned_stations_this_week = 0
+
+            self.score += 1.0
+
             return 10.0
+
         return 0.0
 
     def _draw_ui(self):
@@ -555,7 +572,10 @@ class MetroSimulatorEnv(gym.Env):
                 "manage_line": spaces.Box(low=0, high=1, shape=(3, config.MAX_STATIONS, config.MAX_STATIONS),
                                           dtype=np.int8),
                 "deploy_train": spaces.Box(low=0, high=1, shape=(config.MAX_STATIONS,), dtype=np.int8),
-                "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8)
+                "select_line": spaces.Box(low=0, high=1, shape=(len(config.LINE_COLORS),), dtype=np.int8),
+                # --- DODAJ TĘ LINIĘ ---
+                "manage_line_type": spaces.Box(low=0, high=1, shape=(3,), dtype=np.int8),
+                # -----------------------
             }),
 
             "num_edges": spaces.Box(low=0, high=MAX_EDGES, shape=(1,), dtype=np.int32
@@ -638,6 +658,12 @@ class MetroSimulatorEnv(gym.Env):
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
 
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+
+        self.current_step = 0
+
         if self.screen is None and self.render_mode == "human":
             self._initialize_pygame()
 
@@ -668,12 +694,14 @@ class MetroSimulatorEnv(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
-        info["action_masks"] = obs["action_masks"]
 
         return obs, info
 
     def step(self, action):
-        reward = 0.0
+        self.current_step += 1
+
+        reward = -0.01
+
         if not self.game_over:
             high_level_action, params = action["high_level_action"], action["low_level_params"]
             action_handlers = {1: self._handle_manage_line, 2: self._handle_deploy_train, 3: self._handle_select_line}
@@ -687,9 +715,17 @@ class MetroSimulatorEnv(gym.Env):
 
         obs = self._get_obs()
         info = self._get_info()
-        info["action_masks"] = obs["action_masks"]
 
-        return obs, reward, self.game_over, False, info
+        truncated = False
+        MAX_EPISODE_STEPS = 10000
+
+        if self.current_step >= MAX_EPISODE_STEPS:
+            truncated = True
+
+        info["ep_is_truncated"] = 1.0 if truncated else 0.0
+        info["ep_is_terminated"] = 1.0 if self.game_over else 0.0
+
+        return obs, reward, self.game_over, truncated, info
 
     def render(self):
         if self.screen is None and self.render_mode == "human": self._initialize_pygame()

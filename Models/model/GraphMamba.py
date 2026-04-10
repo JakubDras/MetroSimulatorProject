@@ -7,10 +7,6 @@ import gymnasium_env_metro.config as config
 
 
 class GraphMambaModel(nn.Module):
-    """
-    Definicja architektury sieci opartej na GCN + Mamba.
-    (Poprawiona o spójną warstwę initial_projection)
-    """
 
     def __init__(self, num_node_features: int, hidden_dim: int, num_stations: int):
         super().__init__()
@@ -23,10 +19,16 @@ class GraphMambaModel(nn.Module):
 
         self.mamba = Mamba(
             d_model=hidden_dim,
-            d_state=16,
+            d_state=8, #Można spróbować później 8. 16 to za dużo
             d_conv=4,
             expand=2,
         )
+
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU()
+        )
+
         self.norm = nn.LayerNorm(hidden_dim)
 
         self.critic_head = nn.Linear(hidden_dim, 1)
@@ -50,14 +52,32 @@ class GraphMambaModel(nn.Module):
         seq_out = self.mamba(seq_in)
         h_mamba = seq_out.squeeze(0)
 
-        h_final = self.norm(h_gnn + h_mamba)
+        combined = torch.cat([h_gnn, h_mamba], dim=-1)
+
+        h_fused = self.fusion_layer(combined)
+
+        h_final = self.norm(h_fused + h_gnn)
         return h_final
 
+    def freeze_mamba_block(self):
+        for param in self.mamba.parameters():
+            param.requires_grad = False
+        for param in self.norm.parameters():
+            param.requires_grad = False
+
+    def freeze_gnn_layers(self):
+        for param in self.initial_projection.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv1.parameters():
+            param.requires_grad = False
+        for param in self.gnn_conv2.parameters():
+            param.requires_grad = False
+        for param in self.fusion_layer.parameters():
+            param.requires_grad = False
+
+
     def freeze_encoder_layers(self):
-        """
-        Wyłącza obliczanie gradientów dla wszystkich warstw enkodera.
-        """
-        print("--- 🧊 MROŻENIE WARSTW ENKODERA (PROJECTION + GCN + MAMBA) ---")
+
         for param in self.initial_projection.parameters():
             param.requires_grad = False
         for param in self.gnn_conv1.parameters():
@@ -70,9 +90,7 @@ class GraphMambaModel(nn.Module):
             param.requires_grad = False
 
     def forward(self, obs: dict, device: str) -> tuple[torch.Tensor, dict]:
-        """
-        NOWA METODA FORWARD (bez zmian, w pełni kompatybilna)
-        """
+
         node_features_batch = torch.as_tensor(obs["node_features"], dtype=torch.float32, device=device)
         edge_index_batch = torch.as_tensor(obs["edge_index"], dtype=torch.long, device=device)
         num_nodes_batch = torch.as_tensor(obs["num_nodes"], dtype=torch.long, device=device).flatten()
