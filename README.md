@@ -11,7 +11,7 @@ Projekt bada zachowanie różnych architektur sieci grafowych (GNN, Graph Transf
 
 Stworzyliśmy dedykowane środowisko zgodne ze standardem **Gymnasium**. Agent RL musi autonomicznie zarządzać rosnącą siecią metra, łącząc nowe stacje (reprezentowane przez figury geometryczne) i zarządzając flotą pociągów, aby zoptymalizować przepływ pasażerów.
 
-![Symulator Metra](./image_61e6fe.png)
+![Symulator Metra](./SS_gra.png)
 *Wizualizacja dynamicznego środowiska symulacji sieci metra. W miarę upływu czasu pojawiają się nowe stacje, wymagające od agenta adaptacji topologii w czasie rzeczywistym.*
 
 ##  Główne Wnioski z Badań
